@@ -1,4 +1,5 @@
 import time
+import functools
 
 from pydantic import BaseModel
 from loguru import logger
@@ -19,7 +20,39 @@ _engine = create_async_engine(
 )
 
 # async version sessionmaker
-session_maker = async_sessionmaker(_engine, expire_on_commit=False)
+# call init_sessionmaker() before use this instance
+session_maker: async_sessionmaker | None = async_sessionmaker(_engine, expire_on_commit=False)
+
+
+async def init_sessionmaker(force_create: bool = False) -> async_sessionmaker:
+    """
+    (Async) Tool function to initialized the session maker if it's not ready.
+    :return: None
+    """
+    global session_maker
+    if (session_maker is None) or force_create:
+        logger.info('Session maker initializing...')
+        session_maker = async_sessionmaker(_engine, expire_on_commit=False)
+        logger.success('Session maker initialized')
+    else:
+        logger.debug('Session maker already ready')
+    return session_maker
+
+
+def run_with_session(func, session_maker: async_sessionmaker = session_maker):
+    """
+    Let the decorated function runs in a session produced by session maker
+    :param func: An async function
+    :param session_maker: You can assign the ``async_sessionmaker`` if you want.
+    """
+
+    @functools.wraps()
+    async def wrapper(*args, **kwargs):
+        async with session_maker() as session:
+            async with session.begin():
+                return await func()
+
+    return wrapper
 
 
 async def add_record(record_info: BalanceRecord):

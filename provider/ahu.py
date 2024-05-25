@@ -5,7 +5,14 @@ import re
 from schema.electric import BalanceRecord
 from config import dorm
 
-aiohttp_session = ClientSession(base_url='https://ycard.ahu.edu.cn')
+aiohttp_session: ClientSession | None = ClientSession(base_url='https://ycard.ahu.edu.cn')
+
+
+async def init_client_session(force_create: bool = False):
+    global aiohttp_session
+    if aiohttp_session is None or force_create:
+        aiohttp_session = ClientSession(base_url='https://ycard.ahu.edu.cn')
+    return aiohttp_session
 
 
 def extract_balance(json):

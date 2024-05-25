@@ -9,10 +9,9 @@ from schema.electric import BalanceRecord
 
 
 async def main():
-    ahu.aiohttp_session = ClientSession(base_url='https://ycard.ahu.edu.cn')
+    await ahu.init_client_session(force_create=True)
     record_dict = await ahu.get_record()
     logger.info('Record caught from AHU:', record_dict)
-
     try:
         record_ins = BalanceRecord(**record_dict)
         await database.add_record(record_ins)
@@ -27,4 +26,7 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except RuntimeError as re:
+        if re.__repr__() == '''RuntimeError('Timeout context manager should be used inside a task')''':
+            logger.error('Async Client Session Error')
+            logger.exception(re)
         logger.success('Task accomplished')
