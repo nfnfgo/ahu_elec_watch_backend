@@ -6,12 +6,15 @@ from loguru import logger
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select, func
-from sqlalchemy import exc
+from sqlalchemy import exc as sqlexc
+
+from exception import error as exc
 
 from config import sql
 
 from schema.electric import SQLRecord, BalanceRecord, CountInfoOut
 from schema import sql as sql_schema
+from schema import electric as elec_schema
 
 _engine = create_async_engine(
     f"mysql+aiomysql://"
@@ -26,7 +29,7 @@ session_maker: async_sessionmaker | None = async_sessionmaker(_engine, expire_on
 
 async def init_sessionmaker(force_create: bool = False) -> async_sessionmaker:
     """
-    (Async) Tool function to initialized the session maker if it's not ready.
+    (Async) Tool function to initialize the session maker if it's not ready.
     :return: None
     """
     global session_maker
@@ -90,11 +93,11 @@ async def get_record_count() -> CountInfoOut:
             # retrive data
             try:
                 res = (await session.scalars(stmt)).one_or_none()
-            except exc.NoSuchColumnError as e:
+            except sqlexc.NoSuchColumnError as e:
                 res = 0
             try:
                 res_last_7 = (await session.scalars(stmt_last_7)).one_or_none()
-            except exc.NoSuchColumnError as e:
+            except sqlexc.NoSuchColumnError as e:
                 res_last_7 = 0
             return CountInfoOut(total=res, last_7_days=res_last_7)
 
@@ -107,8 +110,109 @@ async def get_records(pagination: sql_schema.PaginationConfig) -> list[BalanceRe
             try:
                 res = await session.scalars(stmt)
             except exc.NoSuchColumnError as e:
-                logger.debug('No record found, return empty record list')
                 res = []
             record_list: list[BalanceRecord] = res.all()
             return record_list
     pass
+
+
+async def find_record_timestamp_days_ago(days: int = 7) -> int:
+    """
+    Find out and return an `int` timestamp that closest to a specified number of days ago.
+    :param days: How many days ago you want to find the timestamp closest to.
+    :return: The timestamp. If no timestamp satisfied, return the oldest one, if no record, raise no_result error
+    """
+    ideal_timestamp: int = int(time.time()) - days * 24 * 60 * 60
+
+    stmt_find_after_ideal_timestamp = (select(func.min(SQLRecord.timestamp))
+                                       .where(SQLRecord.timestamp > ideal_timestamp)
+                                       .order_by(SQLRecord.timestamp))
+
+    stmt_latest_timestamp = (select(SQLRecord.timestamp).order_by(SQLRecord.timestamp.desc()).limit(limit=1))
+
+    logger.debug('Statement to find out recent day timestamp:', stmt_find_after_ideal_timestamp)
+
+    async with session_maker() as session:
+        async with session.begin():
+            timestamp = -1
+            try:
+                res = await session.scalars(stmt_find_after_ideal_timestamp)
+                timestamp = res.one()
+            except sqlexc.NoSuchColumnError as e:
+                try:
+                    res = await session.scalars(stmt_latest_timestamp)
+                    timestamp = res.one()
+                except sqlexc.NoSuchColumnError as e:
+                    raise exc.NoResultError('Could not found record close to a specified time')
+            return timestamp
+
+
+def calculate_usage(record_list: list[BalanceRecord]) -> dict[str, int]:
+    """
+    Calculate the light and ac uaages based on a record list.
+
+    Returns A dict with both light and ac usage::
+
+        {
+            light_usage: int,
+            ac_usage: int,
+        }
+
+
+    :param record_list: List of records. Requires ascending timestamp
+    """
+    light_usage = 0
+    ac_usage = 0
+    size = len(record_list)
+
+    for i in range(1, size):
+        light_diff = record_list[i].light_balance - record_list[i - 1].light_balance
+        ac_diff = record_list[i].ac_balance - record_list[i - 1].ac_balance
+
+        light_diff = min(light_diff, 0)
+        ac_diff = min(ac_diff, 0)
+
+        light_usage -= light_diff
+        ac_usage -= ac_diff
+
+    return {
+        'light_usage': light_usage,
+        'ac_usage': ac_usage,
+    }
+
+
+async def get_statistics() -> elec_schema.Statistics:
+    try:
+        timestamp_day_ago: int = await find_record_timestamp_days_ago(1)
+        timestamp_7_days_ago: int = await find_record_timestamp_days_ago(7)
+    except exc.NoResultError as e:
+        raise exc.NoResultError(
+            'No record found. Statistics only available when there is at least one record in database'
+        )
+
+    usage_day: dict = {}
+    usage_week: dict = {}
+
+    async with session_maker() as session:
+        async with session.begin():
+            # retrieve and calc daily usage
+            res = await session.scalars(
+                select(SQLRecord).where(SQLRecord.timestamp > timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
+            )
+            record_list: list[BalanceRecord] = res.all()
+            usage_day = calculate_usage(record_list)
+
+            # retrieve and calc weekly usage
+            res = await session.scalars(
+                select(SQLRecord).where(SQLRecord.timestamp > timestamp_7_days_ago).order_by(SQLRecord.timestamp.asc())
+            )
+            record_list: list[BalanceRecord] = res.all()
+            usage_week = calculate_usage(record_list)
+
+    return elec_schema.Statistics(
+        timestamp=time.time(),
+        light_total_last_day=usage_day['light_usage'],
+        ac_total_last_day=usage_day['ac_usage'],
+        light_total_last_week=usage_week['light_usage'],
+        ac_total_last_week=usage_week['ac_usage'],
+    )

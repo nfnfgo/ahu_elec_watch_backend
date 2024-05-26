@@ -15,6 +15,7 @@ async def main():
     try:
         record_ins = BalanceRecord(**record_dict)
         await database.add_record(record_ins)
+        await database.session_maker().close()
     except Exception as e:
         logger.error('Failed to add record info into database')
         logger.exception(e)
@@ -30,3 +31,4 @@ if __name__ == '__main__':
             logger.error('Async Client Session Error')
             logger.exception(re)
         logger.success('Task accomplished')
+# Test git

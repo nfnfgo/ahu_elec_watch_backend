@@ -24,7 +24,7 @@ class PaginationConfig(BaseModel):
             pass
     """
     # how many rows contains in a page
-    size: int
+    size: int = 20
 
     # zero-index page number
     index: int

@@ -38,8 +38,10 @@ class BalanceRecord(BaseModel):
 class SQLRecord(SQLBaseModel):
     __tablename__ = 'record'
 
-    timestamp: Mapped[float] = mapped_column(
+    timestamp: Mapped[int] = mapped_column(
         primary_key=True,
+        autoincrement=False,
+        unique=True,
         comment='The timestamp this record has been caught')
     light_balance: Mapped[float] = mapped_column(comment='The balance or general account')
     ac_balance: Mapped[float] = mapped_column(comment='The balance of air conditioner account')
@@ -52,11 +54,11 @@ class Statistics(BaseModel):
     # The timestamp when this statistics generated
     timestamp: float
     # Total balance used at last day
-    total_last_day: float
+    light_total_last_day: float
     # Total balance used at last 7 days
-    total_last_7_days: float
-    # A list contains all available record at last 7 day
-    record_last_7_days: list[BalanceRecord] = []
+    light_total_last_week: float
+    ac_total_last_day: float
+    ac_total_last_week: float
 
 
 class CountInfoOut(BaseModel):
