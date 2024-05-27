@@ -216,3 +216,24 @@ async def get_statistics() -> elec_schema.Statistics:
         light_total_last_week=usage_week['light_usage'],
         ac_total_last_week=usage_week['ac_usage'],
     )
+
+
+async def get_recent_records(days: int) -> list[SQLRecord]:
+    """
+    Get all the records in recent days.
+
+    Notes that the list return is asc by timestamp, means old record in the begining.
+
+    :param days: The days you want to get records starts from.
+    :return: A list of BalanceRecord objects. If no result, return empty list.
+    """
+    timestamp_day_ago: int = int(time.time()) - days * 24 * 60 * 60
+    stmt = select(SQLRecord).where(SQLRecord.timestamp >= timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
+    async with session_maker() as session:
+        async with session.begin():
+            try:
+                res = await session.scalars(stmt)
+                sql_obj_list: list[SQLRecord] = res.all()
+                return sql_obj_list
+            except sqlexc.NoSuchColumnError as e:
+                return []
