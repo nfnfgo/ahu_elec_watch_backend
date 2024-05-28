@@ -1,4 +1,5 @@
 import time
+from enum import Enum
 from typing import Annotated
 
 from fastapi import APIRouter, Query
@@ -64,9 +65,11 @@ async def get_lastest_record():
 
 
 @infoRouter.get('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
-async def get_recent_days_records(days: Annotated[int, Query(ge=1)] = 7):
+async def get_recent_days_records(
+        days: Annotated[int, Query(ge=1)] = 7,
+        type: elec_schema.RecordDataType = elec_schema.RecordDataType.balance):
     """
     Here days actually has been converted to timstamp. That means the earliest limit is set by
     calculating time offset but not using natural day as limit.
     """
-    return await provider_db.get_recent_records(days)
+    return await provider_db.get_recent_records(days, type=type)

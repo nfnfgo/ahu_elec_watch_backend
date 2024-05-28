@@ -15,6 +15,7 @@ from provider import ahu
 
 # sub routers
 from endpoints.info import infoRouter
+from endpoints.auth import auth_router
 
 # CORS
 middlewares = [
@@ -32,7 +33,7 @@ middlewares = [
 
 app = FastAPI(middleware=middlewares)
 app.include_router(infoRouter, prefix="/info", tags=['Info'])
-
+app.include_router(auth_router, prefix='/auth', tags=['Authentication'])
 
 @app.get('/test')
 async def test_get_ahu_data():

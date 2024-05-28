@@ -218,13 +218,32 @@ async def get_statistics() -> elec_schema.Statistics:
     )
 
 
-async def get_recent_records(days: int) -> list[SQLRecord]:
+def convert_balance_list_to_usage_list(record_list: list[BalanceRecord | SQLRecord]) -> list[BalanceRecord | SQLRecord]:
+    size = len(record_list)
+    # Don't deal with empty list
+    if size == 0:
+        return []
+
+    # iterate from end to start to update the balance to usage.
+    # notice no negative usage allowed here. Which will be forcefully pull up to 0
+    for i in range(size, 0, -1):
+        record_list[i].light_balance = max(0.0, record_list[i - 1].light_balance - record_list[i].light_balance)
+        record_list[i].ac_balance = max(0.0, record_list[i - 1].ac_balance - record_list[i].ac_balance)
+
+    return record_list
+
+
+async def get_recent_records(
+        days: int,
+        type: elec_schema.RecordDataType,
+) -> list[SQLRecord]:
     """
     Get all the records in recent days.
 
     Notes that the list return is asc by timestamp, means old record in the begining.
 
     :param days: The days you want to get records starts from.
+    :param type: The return type of the data list. Check `RecordDataType` for more info.
     :return: A list of BalanceRecord objects. If no result, return empty list.
     """
     timestamp_day_ago: int = int(time.time()) - days * 24 * 60 * 60
@@ -234,6 +253,8 @@ async def get_recent_records(days: int) -> list[SQLRecord]:
             try:
                 res = await session.scalars(stmt)
                 sql_obj_list: list[SQLRecord] = res.all()
+                if type == elec_schema.RecordDataType.usage:
+                    return convert_balance_list_to_usage_list(sql_obj_list)
                 return sql_obj_list
             except sqlexc.NoSuchColumnError as e:
                 return []

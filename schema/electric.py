@@ -1,4 +1,5 @@
 import time
+from enum import Enum
 
 from sqlalchemy.orm import mapped_column, Mapped
 from sqlalchemy import BIGINT
@@ -72,3 +73,16 @@ TEST_STATISTICS_DICT = {
     'total_last_7_days': 10.85,
     'record_last_7_days': []
 }
+
+
+class RecordDataType(str, Enum):
+    """
+    Define the returned record list data type.
+
+    For each record in the return list:
+
+    - `balance` Returns the balance of that timestamp.
+    - `usage` Returns the usage during the previous record and current record.
+    """
+    balance: str = 'balance'
+    usage: str = 'usage'

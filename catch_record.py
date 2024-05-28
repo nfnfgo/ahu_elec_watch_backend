@@ -11,7 +11,8 @@ from schema.electric import BalanceRecord
 async def main():
     await ahu.init_client_session(force_create=True)
     record_dict = await ahu.get_record()
-    logger.info('Record caught from AHU:', record_dict)
+    logger.info('Record caught from AHU:')
+    logger.info(record_dict)
     try:
         record_ins = BalanceRecord(**record_dict)
         await database.add_record(record_ins)
@@ -31,4 +32,3 @@ if __name__ == '__main__':
             logger.error('Async Client Session Error')
             logger.exception(re)
         logger.success('Task accomplished')
-# Test git
