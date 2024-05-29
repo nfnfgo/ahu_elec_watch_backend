@@ -37,7 +37,7 @@ async def get_record() -> dict:
     async with aiohttp_session.post(
             url='/charge/feeitem/getThirdData',
             data=dorm.DORM_LIGHT_INFO_DICT,
-            headers=dorm.DORM_REQ_HEADER_DICT,
+            headers=dorm.get_ahu_header(),
     ) as res:
         json = await res.json()
         light_balance = extract_balance(json)

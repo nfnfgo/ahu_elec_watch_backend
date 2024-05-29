@@ -16,6 +16,7 @@ from provider import ahu
 # sub routers
 from endpoints.info import infoRouter
 from endpoints.auth import auth_router
+from endpoints.ahu import ahu_router
 
 # CORS
 middlewares = [
@@ -34,6 +35,8 @@ middlewares = [
 app = FastAPI(middleware=middlewares)
 app.include_router(infoRouter, prefix="/info", tags=['Info'])
 app.include_router(auth_router, prefix='/auth', tags=['Authentication'])
+app.include_router(ahu_router, prefix='/ahu', tags=['AHU'])
+
 
 @app.get('/test')
 async def test_get_ahu_data():
@@ -63,8 +66,10 @@ if __name__ == "__main__":
     # start uvicorn server with directory monitor
     uvicorn.run(
         app="main:app",
-        host='0.0.0.0',
+        # here in some VPS 127.0.0.1 won't work, need to use 0.0.0.0 instead
+        host=host,
         port=config.general.PORT,
         reload=True,
+        # hide uvicorn header
         server_header=False,
     )

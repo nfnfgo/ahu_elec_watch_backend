@@ -10,6 +10,7 @@ from schema.electric import BalanceRecord
 
 async def main():
     await ahu.init_client_session(force_create=True)
+
     record_dict = await ahu.get_record()
     logger.info('Record caught from AHU:')
     logger.info(record_dict)

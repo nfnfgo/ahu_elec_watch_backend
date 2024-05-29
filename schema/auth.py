@@ -50,3 +50,4 @@ class TokenData(BaseModel):
             raise exc.TokenError(role_not_match=True)
 
         return True
+
