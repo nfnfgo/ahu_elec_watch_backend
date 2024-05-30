@@ -106,13 +106,12 @@ async def get_records(pagination: sql_schema.PaginationConfig) -> list[BalanceRe
     stmt = select(SQLRecord).order_by(SQLRecord.timestamp.desc())
     stmt = pagination.use_on(stmt)
     async with session_maker() as session:
-        async with session.begin():
-            try:
-                res = await session.scalars(stmt)
-            except exc.NoSuchColumnError as e:
-                res = []
-            record_list: list[BalanceRecord] = res.all()
-            return record_list
+        try:
+            res = await session.scalars(stmt)
+        except sqlexc.NoSuchColumnError as e:
+            res = []
+        record_list: list[BalanceRecord] = res.all()
+        return record_list
     pass
 
 
@@ -129,8 +128,6 @@ async def find_record_timestamp_days_ago(days: int = 7) -> int:
                                        .order_by(SQLRecord.timestamp))
 
     stmt_latest_timestamp = (select(SQLRecord.timestamp).order_by(SQLRecord.timestamp.desc()).limit(limit=1))
-
-    logger.debug('Statement to find out recent day timestamp:', stmt_find_after_ideal_timestamp)
 
     async with session_maker() as session:
         async with session.begin():
@@ -226,16 +223,21 @@ def convert_balance_list_to_usage_list(record_list: list[BalanceRecord | SQLReco
 
     # iterate from end to start to update the balance to usage.
     # notice no negative usage allowed here. Which will be forcefully pull up to 0
-    for i in range(size, 0, -1):
+    for i in range(size - 1, 0, -1):
         record_list[i].light_balance = max(0.0, record_list[i - 1].light_balance - record_list[i].light_balance)
         record_list[i].ac_balance = max(0.0, record_list[i - 1].ac_balance - record_list[i].ac_balance)
+
+    # for more info about balance / usage calculation, check out docs/usage_calc.md
+    # In which, it described why the first info of the list should be set to zero.
+    record_list[0].ac_balance = 0
+    record_list[0].light_balance = 0
 
     return record_list
 
 
 async def get_recent_records(
         days: int,
-        type: elec_schema.RecordDataType,
+        info_type: elec_schema.RecordDataType,
 ) -> list[SQLRecord]:
     """
     Get all the records in recent days.
@@ -248,13 +250,14 @@ async def get_recent_records(
     """
     timestamp_day_ago: int = int(time.time()) - days * 24 * 60 * 60
     stmt = select(SQLRecord).where(SQLRecord.timestamp >= timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
+    logger.debug('Into get_recent_records')
     async with session_maker() as session:
-        async with session.begin():
-            try:
-                res = await session.scalars(stmt)
-                sql_obj_list: list[SQLRecord] = res.all()
-                if type == elec_schema.RecordDataType.usage:
-                    return convert_balance_list_to_usage_list(sql_obj_list)
-                return sql_obj_list
-            except sqlexc.NoSuchColumnError as e:
-                return []
+        try:
+            res = await session.scalars(stmt)
+            sql_obj_list: list[SQLRecord] = res.all()
+            if info_type == elec_schema.RecordDataType.usage:
+                logger.debug('Start generating usage list')
+                return convert_balance_list_to_usage_list(sql_obj_list)
+            return sql_obj_list
+        except sqlexc.NoSuchColumnError as e:
+            return []

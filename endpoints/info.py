@@ -53,7 +53,7 @@ async def get_record_list(pagination: PaginationConfig):
     return await provider_db.get_records(pagination)
 
 
-@infoRouter.get('/lastest_record', tags=['Record'], response_model=BalanceRecord)
+@infoRouter.get('/latest_record', tags=['Record'], response_model=BalanceRecord)
 async def get_lastest_record():
     res = await provider_db.get_records(
         pagination=PaginationConfig(size=1, index=0)
@@ -67,9 +67,9 @@ async def get_lastest_record():
 @infoRouter.get('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
 async def get_recent_days_records(
         days: Annotated[int, Query(ge=1)] = 7,
-        type: elec_schema.RecordDataType = elec_schema.RecordDataType.balance):
+        info_type: elec_schema.RecordDataType = elec_schema.RecordDataType.balance):
     """
     Here days actually has been converted to timstamp. That means the earliest limit is set by
     calculating time offset but not using natural day as limit.
     """
-    return await provider_db.get_recent_records(days, type=type)
+    return await provider_db.get_recent_records(days, info_type=info_type)
