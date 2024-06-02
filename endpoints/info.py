@@ -9,6 +9,7 @@ from provider.database import add_record, get_record_count
 from provider import database as provider_db
 from schema.electric import BalanceRecord
 from schema import electric as elec_schema
+from schema import general as gene_schema
 from schema.sql import PaginationConfig
 
 from exception import error as exc
@@ -18,7 +19,7 @@ from exception import error as exc
 infoRouter = APIRouter()
 
 
-@infoRouter.get('/statistics', response_model=Statistics)
+@infoRouter.get('/statistics', response_model=Statistics, tags=['Statistics'])
 async def get_electrical_usage_statistic():
     return await provider_db.get_statistics()
 
@@ -40,7 +41,7 @@ async def add_new_record(new_record: BalanceRecord, use_current_timestamp: bool 
     await add_record(new_record)
 
 
-@infoRouter.get('/record_count', response_model=elec_schema.CountInfoOut, tags=['Record'])
+@infoRouter.get('/record_count', response_model=elec_schema.CountInfoOut, tags=['Record', 'Statistics'])
 async def record_count():
     return await get_record_count()
 
@@ -73,3 +74,37 @@ async def get_recent_days_records(
     calculating time offset but not using natural day as limit.
     """
     return await provider_db.get_recent_records(days, info_type=info_type)
+
+
+@infoRouter.get(
+    '/daily_usage',
+    response_model=list[elec_schema.PeriodUsageInfoOut],
+    tags=['Statistics'], )
+async def get_daily_usage(
+        days: Annotated[int, Query(ge=1)] = 7,
+        recent_on_top: Annotated[bool, Query()] = True,
+):
+    """
+    Parameters:
+
+    - ``days``: The number of days you want to calculate usage statistics. Back starting from today.
+    - ``recent_on_top``: If ``true``, then the day closest to today will at the first place of the return list.
+    """
+    return await provider_db.daily_usage_list(days=days, recent_on_top=recent_on_top)
+
+
+@infoRouter.get(
+    '/period_usage',
+    response_model=list[elec_schema.PeriodUsageInfoOut],
+    tags=['Statistics'],
+)
+async def get_period_usage(
+        period: gene_schema.PeriodUnit,
+        period_count: int,
+        recent_on_top: bool = True,
+):
+    return await provider_db.period_usage_list(
+        period=period,
+        period_count=period_count,
+        recent_on_top=recent_on_top,
+    )

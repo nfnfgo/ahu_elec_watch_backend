@@ -44,7 +44,7 @@ class SQLRecord(SQLBaseModel):
         autoincrement=False,
         unique=True,
         comment='The timestamp this record has been caught')
-    light_balance: Mapped[float] = mapped_column(comment='The balance or general account')
+    light_balance: Mapped[float] = mapped_column(comment='The balance or general.py account')
     ac_balance: Mapped[float] = mapped_column(comment='The balance of air conditioner account')
 
 
@@ -86,3 +86,19 @@ class RecordDataType(str, Enum):
     """
     balance: str = 'balance'
     usage: str = 'usage'
+
+
+
+class PeriodUsageInfoOut(BaseModel):
+    """
+    Define the daily usage info return type.
+
+    Members:
+
+    - ``start_time`` ``end_time``: The start and end timestamp of the statistics of this record.
+    - ``ac_usage`` ``balance_usage``: The usage info of the balance during this duration.
+    """
+    start_time: int
+    end_time: int
+    ac_usage: float
+    light_usage: float

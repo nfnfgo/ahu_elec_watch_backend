@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import jwt
 
 from fastapi import APIRouter, Query, Depends, Request, Response
+from fastapi.responses import JSONResponse
 
 from config.auth import RoleInfo
 from endpoints import deps
@@ -98,6 +99,15 @@ async def login_into_account(
     """
     resp.set_cookie(key='session', value=token)
     return LoginTokenOut(token=token)
+
+
+@auth_router.get('/logout')
+async def logout_account(resp: Response):
+    resp.delete_cookie('session')
+    return JSONResponse(
+        status_code=200,
+        content={'is_logged_out': True}
+    )
 
 
 @auth_router.post('/role_test')

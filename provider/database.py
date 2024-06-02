@@ -1,4 +1,5 @@
 import time
+import datetime
 import functools
 
 from pydantic import BaseModel
@@ -6,15 +7,18 @@ from loguru import logger
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select, func
+from sqlalchemy.sql import and_, or_
 from sqlalchemy import exc as sqlexc
 
+import config.general
 from exception import error as exc
 
 from config import sql
 
-from schema.electric import SQLRecord, BalanceRecord, CountInfoOut
+from schema.electric import SQLRecord, BalanceRecord, CountInfoOut, PeriodUsageInfoOut
 from schema import sql as sql_schema
 from schema import electric as elec_schema
+from schema import general as general_schema
 
 _engine = create_async_engine(
     f"mysql+aiomysql://"
@@ -118,8 +122,17 @@ async def get_records(pagination: sql_schema.PaginationConfig) -> list[BalanceRe
 async def find_record_timestamp_days_ago(days: int = 7) -> int:
     """
     Find out and return an `int` timestamp that closest to a specified number of days ago.
-    :param days: How many days ago you want to find the timestamp closest to.
-    :return: The timestamp. If no timestamp satisfied, return the oldest one, if no record, raise no_result error
+
+    Parameters:
+
+    - ``days`` How many days ago you want to find the timestamp closest to.
+
+    Notice here days **does NOT mean natural day** but means 24 hours.
+
+    Returns:
+
+    The timestamp later than that day back and closest to that day.
+    If no timestamp satisfied, return the oldest one, if no record, raise no_result error
     """
     ideal_timestamp: int = int(time.time()) - days * 24 * 60 * 60
 
@@ -135,6 +148,8 @@ async def find_record_timestamp_days_ago(days: int = 7) -> int:
             try:
                 res = await session.scalars(stmt_find_after_ideal_timestamp)
                 timestamp = res.one()
+                if timestamp is None:
+                    raise sqlexc.NoSuchColumnError()
             except sqlexc.NoSuchColumnError as e:
                 try:
                     res = await session.scalars(stmt_latest_timestamp)
@@ -144,7 +159,10 @@ async def find_record_timestamp_days_ago(days: int = 7) -> int:
             return timestamp
 
 
-def calculate_usage(record_list: list[BalanceRecord]) -> dict[str, int]:
+def calculate_usage(
+        record_list: list[BalanceRecord],
+        result_rounded: bool = True,
+) -> dict[str, int]:
     """
     Calculate the light and ac uaages based on a record list.
 
@@ -156,7 +174,9 @@ def calculate_usage(record_list: list[BalanceRecord]) -> dict[str, int]:
         }
 
 
-    :param record_list: List of records. Requires ascending timestamp
+    Parameters:
+    - ``record_list``: List of records. Requires ascending timestamp.
+    - ``result_rounded``: If `true`, result will be rounded to two decimal places.
     """
     light_usage = 0
     ac_usage = 0
@@ -171,6 +191,10 @@ def calculate_usage(record_list: list[BalanceRecord]) -> dict[str, int]:
 
         light_usage -= light_diff
         ac_usage -= ac_diff
+
+    if result_rounded:
+        light_usage = round(light_usage, 2)
+        ac_usage = round(ac_usage, 2)
 
     return {
         'light_usage': light_usage,
@@ -215,7 +239,39 @@ async def get_statistics() -> elec_schema.Statistics:
     )
 
 
-def convert_balance_list_to_usage_list(record_list: list[BalanceRecord | SQLRecord]) -> list[BalanceRecord | SQLRecord]:
+def convert_balance_list_to_usage_list(
+        record_list: list[BalanceRecord | SQLRecord],
+        per_hour_usage: bool = True,
+        point_spreading: bool = True,
+        smoothing: bool = True,
+
+) -> list[BalanceRecord | SQLRecord]:
+    """
+    Convert the balance info to usage info of a record list by doing difference calculation.
+
+    Parameters:
+
+    - ``record_list`` List of records. Could be ``BalanceRecord`` or ``SQLRecord``.
+
+    Notice the timestamp of passed ``record_list`` must be ascending.
+
+    Noice when passing SQLRecord type object list, **make sure that mutating these object in list
+    will NOT cause the data change in database**. For example you shouldn't passing object that
+    got while using ``session.begin()`` context manager.
+
+    - ``per_hour_usage`` If `true`, the value will convert to unit (usage/hour) and no longer represent usage at that time.
+    - ``point_spreading`` If `true`, implement point spreading to the usage list.
+    - ``smoothing`` If `true`, implement smoothing to the usage list.
+
+    Notice, if ``point_spreading`` and ``smoothing`` are both `true`, then spreading will be implemented before
+    smoothing.
+
+
+
+    Returns:
+
+    List with same element type when you passed in.
+    """
     size = len(record_list)
     # Don't deal with empty list
     if size == 0:
@@ -232,32 +288,252 @@ def convert_balance_list_to_usage_list(record_list: list[BalanceRecord | SQLReco
     record_list[0].ac_balance = 0
     record_list[0].light_balance = 0
 
+    if point_spreading:
+        record_list = usage_list_point_spreading(record_list=record_list)
+
+    if smoothing:
+        record_list = usage_list_smoothing(record_list=record_list)
+
+    if per_hour_usage:
+        factor: float = config.general.BACKEND_CATCH_TIME_DURATION_MIN / 60
+        factor = 1 / factor
+        for i in range(len(record_list)):
+            record_list[i].light_balance = record_list[i].light_balance * factor
+            record_list[i].ac_balance = record_list[i].ac_balance * factor
+
+    return record_list
+
+
+def usage_list_point_spreading(
+        record_list: list[SQLRecord | BalanceRecord]
+) -> list[SQLRecord | BalanceRecord]:
+    """
+    Implement data point spreading on the receiving usage record list then returns it.
+
+    Parameters:
+
+    - ``record_list`` List of **usage** records. Require ascending timestamp.
+
+    Notice if you passing a ``SQLRecord`` list, then this function may mutating the value inside database if some SQLRecord
+    instance are in SQLAlchemy Transaction Context.
+
+    For more info about *Data Point Spreading*, check out ``docs/usage_calc.md`` Data Point Spreading part.
+    """
+    list_len = len(record_list)
+    # only list with more than two elements could perform data spreading
+    if list_len < 2:
+        return record_list
+
+    max_dis: int = config.general.POINT_SPREADING_DIS_LIMIT_MIN * 60
+
+    # using a new temporary list to store the newly added point
+    # Here use a new list because we can not mutate the list while iterating it.
+    added_record_list: list[BalanceRecord] = []
+
+    for cur_idx in range(1, list_len):
+        # calculate timestamp distance
+        timestamp_diff: int = int(record_list[cur_idx].timestamp - record_list[cur_idx - 1].timestamp)
+        # no need for spreading
+        if timestamp_diff <= max_dis:
+            continue
+
+        # calculate point count and new value
+        new_point_count: int = (timestamp_diff - 1) // max_dis
+        new_value_light: float = round(record_list[cur_idx].light_balance / (new_point_count + 1), 2)
+        new_value_ac: float = round(record_list[cur_idx].ac_balance / (new_point_count + 1), 2)
+
+        # update data of the record2
+        record_list[cur_idx].light_balance = new_value_light
+        record_list[cur_idx].ac_balance = new_value_ac
+
+        # adding new point to waiting list
+        current_timestamp = record_list[cur_idx].timestamp
+        for back_idx in range(1, new_point_count + 1):
+            # calc new point timestamp by offset
+            new_timestamp = current_timestamp - back_idx * max_dis
+            # add point
+            added_record_list.append(BalanceRecord(
+                timestamp=new_timestamp,
+                light_balance=new_value_light,
+                ac_balance=new_value_ac,
+            ))
+
+    # merge two list and sort by timestamp ascending
+    record_list.extend(added_record_list)
+    record_list.sort(key=lambda x: x.timestamp)
+
+    return record_list
+
+
+def usage_list_smoothing(record_list: list[SQLRecord | BalanceRecord]) -> list[SQLRecord | BalanceRecord]:
+    """
+    Smoothing a usage record list.
+
+    Has similar notice with ``usage_list_point_spreading()``
+
+    - ``record_list`` must be **ascending in timestamp**.
+    - ``record_list`` may be mutated, so be **cautious when passing SQL ORM Objects**.
+    """
+    list_len = len(record_list)
+    if list_len < 3:
+        return record_list
+
+    ratio_list: list[float] = [0.2, 0.5, 0.3]
+
+    for cur_idx in range(1, list_len - 2):
+        record_list[cur_idx].light_balance = (
+                record_list[cur_idx - 1].light_balance * ratio_list[0] +
+                record_list[cur_idx].light_balance * ratio_list[1] +
+                record_list[cur_idx + 1].light_balance * ratio_list[2]
+        )
+
+        record_list[cur_idx].ac_balance = (
+                record_list[cur_idx - 1].ac_balance * ratio_list[0] +
+                record_list[cur_idx].ac_balance * ratio_list[1] +
+                record_list[cur_idx + 1].ac_balance * ratio_list[2]
+        )
+
     return record_list
 
 
 async def get_recent_records(
         days: int,
         info_type: elec_schema.RecordDataType,
+        point_spreading: bool = True,
+        smoothing: bool = True,
+        per_hour_usage: bool = True,
 ) -> list[SQLRecord]:
     """
     Get all the records in recent days.
 
-    Notes that the list return is asc by timestamp, means old record in the begining.
+    - ``days`` The days you want to get records starts from.
+    - ``info_type`` The return type of the data list. Check `RecordDataType` for more info.
+    - ``point_spreading`` If `true`, implement point spreading to the usage list.
+    - ``smoothing`` If `true`, implement smoothing to the usage list.
+    - ``per_hour_usage`` If `true`, the value will convert to unit (usage/hour) and no longer represent usage at that time.
 
-    :param days: The days you want to get records starts from.
-    :param type: The return type of the data list. Check `RecordDataType` for more info.
-    :return: A list of BalanceRecord objects. If no result, return empty list.
+    Notice, ``point_spreading`` and ``smoothing`` are only available when ``info_type`` is `usage`.
+
+    Notice, if ``point_spreading`` and ``smoothing`` are both `true`, then spreading will be implemented before
+    smoothing.
+
+    Returns:
+
+    Returns A list of BalanceRecord objects. If no result, return empty list.
+    Notes that the list return is asc by timestamp, means old record in the beginning.
     """
     timestamp_day_ago: int = int(time.time()) - days * 24 * 60 * 60
     stmt = select(SQLRecord).where(SQLRecord.timestamp >= timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
-    logger.debug('Into get_recent_records')
     async with session_maker() as session:
         try:
             res = await session.scalars(stmt)
             sql_obj_list: list[SQLRecord] = res.all()
+
+            # convert to usage list if required
             if info_type == elec_schema.RecordDataType.usage:
-                logger.debug('Start generating usage list')
-                return convert_balance_list_to_usage_list(sql_obj_list)
+                return convert_balance_list_to_usage_list(
+                    sql_obj_list,
+                    per_hour_usage=per_hour_usage,
+                    point_spreading=point_spreading,
+                    smoothing=smoothing,
+
+                )
+
             return sql_obj_list
         except sqlexc.NoSuchColumnError as e:
             return []
+
+
+def get_timestamp_of_today_start() -> int:
+    """
+    Return the timestamp of today start, that is today-0:00AM
+    :return: ``int`` type timestamp
+    """
+    today_current = datetime.date.today()
+    time_min = datetime.time.min
+
+    today_start = datetime.datetime.combine(today_current, time_min)
+
+    return int(today_start.timestamp())
+
+
+async def daily_usage_list(
+        days: int,
+        recent_on_top: bool,
+) -> list[elec_schema.PeriodUsageInfoOut]:
+    """
+    Returns a list contains the usage statistics by days.
+
+
+    :param days: The number of days you want to calculate usage statistics. Back starting from today.
+    :param recent_on_top: If ``true``, then the day closest to today will at the first place of the return list.
+    :return: A list of ``DailyUsageInfo`` objects.
+    """
+
+    logger.warning('This method is deprecated, use period_usage_list instead.')
+
+    return await period_usage_list(
+        period=general_schema.PeriodUnit.day,
+        period_count=days,
+        recent_on_top=recent_on_top,
+    )
+
+
+async def period_usage_list(
+        period: general_schema.PeriodUnit,
+        period_count: int,
+        recent_on_top: bool = True):
+    """
+    Get usage statistics list with specified period as time duration unit.
+
+    Parameter:
+
+    - ``period``: The period unit. Check `PeriodUnit` enum class for more info.
+    - ``period_count``: How many periods of usage should be in the result list.
+    """
+    current_timestamp: int = int(time.time())
+    period_start_timestamp: int = general_schema.PeriodUnit.get_current_period_start(period)
+
+    # list store all result items
+    result_list: list[elec_schema.PeriodUsageInfoOut] = []
+
+    # store the current start time in this loop
+    cur_start_time: int = period_start_timestamp
+    cur_end_time: int = current_timestamp
+    async with session_maker() as session:
+        for back_idx in range(0, period_count + 1):
+            if back_idx == 0:
+                cur_end_time = current_timestamp
+
+            # construct statement and execute it
+            stmt = select(SQLRecord).where(
+                and_(
+                    SQLRecord.timestamp >= cur_start_time,
+                    SQLRecord.timestamp <= cur_end_time,
+                )
+            )
+            try:
+                res = await session.scalars(stmt)
+                record_list = res.all()
+                if record_list is None:
+                    raise sqlexc.NoSuchColumnError()
+            except sqlexc.NoSuchColumnError as e:
+                record_list = []
+
+            # calculate the usage
+            usage_dict = calculate_usage(record_list=record_list)
+            result_list.append(PeriodUsageInfoOut(
+                start_time=cur_start_time,
+                end_time=cur_end_time,
+                ac_usage=usage_dict['ac_usage'],
+                light_usage=usage_dict['light_usage'],
+            ))
+
+            # update start and end time of next loop
+            cur_start_time = general_schema.PeriodUnit.get_previous_period_start(period, cur_start_time)
+            cur_end_time = general_schema.PeriodUnit.get_period_end(period, cur_start_time)
+
+    if not recent_on_top:
+        result_list.reverse()
+
+    return result_list
