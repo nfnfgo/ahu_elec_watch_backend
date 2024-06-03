@@ -46,20 +46,21 @@ async def init_sessionmaker(force_create: bool = False) -> async_sessionmaker:
     return session_maker
 
 
-def run_with_session(func, session_maker: async_sessionmaker = session_maker):
-    """
-    Let the decorated function runs in a session produced by session maker
-    :param func: An async function
-    :param session_maker: You can assign the ``async_sessionmaker`` if you want.
-    """
-
-    @functools.wraps()
-    async def wrapper(*args, **kwargs):
-        async with session_maker() as session:
-            async with session.begin():
-                return await func()
-
-    return wrapper
+# deprecated
+# def run_with_session(func, session_maker: async_sessionmaker = session_maker):
+#     """
+#     Let the decorated function runs in a session produced by session maker
+#     :param func: An async function
+#     :param session_maker: You can assign the ``async_sessionmaker`` if you want.
+#     """
+#
+#     @functools.wraps()
+#     async def wrapper(*args, **kwargs):
+#         async with session_maker() as session:
+#             async with session.begin():
+#                 return await func()
+#
+#     return wrapper
 
 
 async def add_record(record_info: BalanceRecord):
@@ -241,9 +242,10 @@ async def get_statistics() -> elec_schema.Statistics:
 
 def convert_balance_list_to_usage_list(
         record_list: list[BalanceRecord | SQLRecord],
-        per_hour_usage: bool = True,
         point_spreading: bool = True,
         smoothing: bool = True,
+        per_hour_usage: bool = True,
+        point_merge_ratio: int | None = None,
 
 ) -> list[BalanceRecord | SQLRecord]:
     """
@@ -262,9 +264,9 @@ def convert_balance_list_to_usage_list(
     - ``per_hour_usage`` If `true`, the value will convert to unit (usage/hour) and no longer represent usage at that time.
     - ``point_spreading`` If `true`, implement point spreading to the usage list.
     - ``smoothing`` If `true`, implement smoothing to the usage list.
+    - ``point_merge_ratio`` If not None, then implement smart point merge with this given ratio.
 
-    Notice, if ``point_spreading`` and ``smoothing`` are both `true`, then spreading will be implemented before
-    smoothing.
+    Notice, the process will be executed as the same order as the one they in param list.
 
 
 
@@ -300,6 +302,9 @@ def convert_balance_list_to_usage_list(
         for i in range(len(record_list)):
             record_list[i].light_balance = record_list[i].light_balance * factor
             record_list[i].ac_balance = record_list[i].ac_balance * factor
+
+    if point_merge_ratio is not None:
+        record_list = smart_points_merge(record_list=record_list, merge_ratio=point_merge_ratio)
 
     return record_list
 
@@ -369,31 +374,111 @@ def usage_list_smoothing(record_list: list[SQLRecord | BalanceRecord]) -> list[S
     """
     Smoothing a usage record list.
 
-    Has similar notice with ``usage_list_point_spreading()``
-
     - ``record_list`` must be **ascending in timestamp**.
-    - ``record_list`` may be mutated, so be **cautious when passing SQL ORM Objects**.
+
+    Notice, this function **will NOT mutate the original list object**.
+
+    Returns:
+
+    - A new list of ``BalanceRecord`` list (when received list len >= 3)
+    - Original list object (when received list len <3)
     """
     list_len = len(record_list)
     if list_len < 3:
         return record_list
 
-    ratio_list: list[float] = [0.2, 0.5, 0.3]
+    ratio_list: list[float] = [0.1, 0.7, 0.2]
+
+    # here we need to use a new record list to store the smoothed point
+    # because we can NOT mutate the info while iterating throw it.
+    new_record_list: list[SQLRecord | BalanceRecord] = []
+
+    new_record_list.append(BalanceRecord(
+        timestamp=record_list[0].timestamp,
+        light_balance=record_list[0].light_balance,
+        ac_balance=record_list[0].ac_balance,
+    ))
 
     for cur_idx in range(1, list_len - 2):
-        record_list[cur_idx].light_balance = (
+        # create new record in the new list
+        new_record_list.append(BalanceRecord())
+
+        # write info into the new record
+        new_record_list[cur_idx].light_balance = (
                 record_list[cur_idx - 1].light_balance * ratio_list[0] +
                 record_list[cur_idx].light_balance * ratio_list[1] +
                 record_list[cur_idx + 1].light_balance * ratio_list[2]
         )
 
-        record_list[cur_idx].ac_balance = (
+        new_record_list[cur_idx].ac_balance = (
                 record_list[cur_idx - 1].ac_balance * ratio_list[0] +
                 record_list[cur_idx].ac_balance * ratio_list[1] +
                 record_list[cur_idx + 1].ac_balance * ratio_list[2]
         )
 
-    return record_list
+        new_record_list[cur_idx].timestamp = record_list[cur_idx].timestamp
+
+    new_record_list.append(BalanceRecord(
+        timestamp=record_list[-1].timestamp,
+        light_balance=record_list[-1].light_balance,
+        ac_balance=record_list[-1].ac_balance,
+    ))
+
+    return new_record_list
+
+
+def smart_points_merge(
+        record_list: list[SQLRecord | BalanceRecord],
+        merge_ratio: int,
+):
+    """
+    Implement smart usage point merge on received usage record list.
+
+    Parameters:
+    - ``record_list``: The original `record_list`, required ascending timestamp.
+    - ``merge_ratio``: How many original points will be merged into a new single point. positive ``int`` value
+
+    Returns:
+
+    - New `BalanceRecord` list (when received list len >= `merge_ratio`)
+    - Original list. When `ratio == 1`, or list len < `merge_ratio`
+    """
+    # the case we directly return original list.
+    list_len = len(record_list)
+    if merge_ratio == 1 or list_len < merge_ratio:
+        return record_list
+
+    merge_ratio = int(merge_ratio)
+    merge_ratio = max(0, merge_ratio)
+
+    logger.debug('Merge Ratio')
+    logger.debug(merge_ratio)
+
+    new_record_list: list[BalanceRecord] = []
+
+    for cur_idx in range(0, list_len, merge_ratio):
+        max_offset: int = min(merge_ratio, list_len - cur_idx)
+
+        sum_ac: float = 0
+        sum_light: float = 0
+        loop_count: int = 0
+
+        for i in range(0, max_offset):
+            sum_ac += record_list[cur_idx + i].ac_balance
+            sum_light += record_list[cur_idx + i].light_balance
+            loop_count += 1
+
+        avg_ac = sum_ac / loop_count
+        avg_light = sum_light / loop_count
+        last_timestamp = record_list[cur_idx + max_offset - 1].timestamp
+
+        new_record_list.append(BalanceRecord(
+            timestamp=last_timestamp,
+            light_balance=avg_light,
+            ac_balance=avg_ac,
+        ))
+
+    return new_record_list
 
 
 async def get_recent_records(
@@ -402,6 +487,7 @@ async def get_recent_records(
         point_spreading: bool = True,
         smoothing: bool = True,
         per_hour_usage: bool = True,
+        use_smart_merge: bool = True,
 ) -> list[SQLRecord]:
     """
     Get all the records in recent days.
@@ -429,6 +515,10 @@ async def get_recent_records(
             res = await session.scalars(stmt)
             sql_obj_list: list[SQLRecord] = res.all()
 
+            ratio: int | None = None
+            if use_smart_merge:
+                ratio = days
+
             # convert to usage list if required
             if info_type == elec_schema.RecordDataType.usage:
                 return convert_balance_list_to_usage_list(
@@ -436,7 +526,7 @@ async def get_recent_records(
                     per_hour_usage=per_hour_usage,
                     point_spreading=point_spreading,
                     smoothing=smoothing,
-
+                    point_merge_ratio=ratio,
                 )
 
             return sql_obj_list
@@ -444,17 +534,18 @@ async def get_recent_records(
             return []
 
 
-def get_timestamp_of_today_start() -> int:
-    """
-    Return the timestamp of today start, that is today-0:00AM
-    :return: ``int`` type timestamp
-    """
-    today_current = datetime.date.today()
-    time_min = datetime.time.min
-
-    today_start = datetime.datetime.combine(today_current, time_min)
-
-    return int(today_start.timestamp())
+# deprecated
+# def get_timestamp_of_today_start() -> int:
+#     """
+#     Return the timestamp of today start, that is today-0:00AM
+#     :return: ``int`` type timestamp
+#     """
+#     today_current = datetime.date.today()
+#     time_min = datetime.time.min
+#
+#     today_start = datetime.datetime.combine(today_current, time_min)
+#
+#     return int(today_start.timestamp())
 
 
 async def daily_usage_list(

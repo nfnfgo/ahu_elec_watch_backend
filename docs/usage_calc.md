@@ -48,3 +48,39 @@ And we need to update the value of all newly added record (including the origina
 
 New value will be `record2.value / (new_point_count + 1)`. Here has a `+1` because we need to take the original
 `record2` into consideration.
+
+# Smart Point Merge
+
+When requesting the records of a long time range. _(For example request the usage info of last week)_, the points will
+become large in numbers, and which will **cause bad visual effect when show all these point on diagram.**
+
+To solve this issue, we may need to merge usage point when possible. For example, if there are 3 points:
+
+```
+Usage Info: [timestamp, usage/hour]
+[1, 100]
+[2, 500]
+[3, 300]
+```
+
+Then, if we merged it into one point, it would be:
+
+```
+[3, 300]
+```
+
+We use the the latest timestamp among this point. Here this decision actually may not be the perfect one, since in
+this case the usage will seem delayed. But I still implemented this at first since I don't know if there will be a
+better choice.
+
+The value `300` is simply the averge of the value of all original points.
+
+## Merge Ratio
+
+We now need to decide how many points should be merged into a new single point.
+
+Here I decided to use daily usage as pivot. This means, the density will be the same as the daily diagram with
+original density.
+
+For example, if there are `24` points per day _(which means catch frequency is 2 times an hour)_, then we should
+merge `3` points into one when user requesting a _3 Days_ period usage to keep a `24` point per view density standard.
