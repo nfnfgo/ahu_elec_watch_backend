@@ -65,15 +65,22 @@ async def get_lastest_record():
     return res[0]
 
 
-@infoRouter.get('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
+@infoRouter.post('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
 async def get_recent_days_records(
         days: Annotated[int, Query(ge=1)] = 7,
-        info_type: elec_schema.RecordDataType = elec_schema.RecordDataType.balance):
+        usage_convert_config: elec_schema.UsageConvertConfig | None = None):
     """
     Here days actually has been converted to timstamp. That means the earliest limit is set by
     calculating time offset but not using natural day as limit.
+
+    Parameters:
+
+    - days: The days back you want to get records start from.
+    - usage_convert_config: If NOT None, convert balance list to usage list using this config.
+
+    Notice: For more info about usage convert config, check out Model `UsageConvertConfig`
     """
-    return await provider_db.get_recent_records(days, info_type=info_type)
+    return await provider_db.get_recent_records(days, usage_convert_config=usage_convert_config)
 
 
 @infoRouter.get(
@@ -108,3 +115,22 @@ async def get_period_usage(
         period_count=period_count,
         recent_on_top=recent_on_top,
     )
+
+
+@infoRouter.get('/get_records_by_time_range')
+async def get_records_by_time_range(start_time: int, end_time: int | None, info_type: elec_schema.RecordDataType):
+    """
+    Get all records info in a specific time range.
+
+    Parameter:
+
+    - ``start_time`` : Specified the start timestamp.
+    - ``end_time``: Specified the end timestamp. If `None`, will be current timestamp.
+
+    Returns:
+    - List of records/usage info.
+    - If no records in this time range, return empty list.
+    """
+    if end_time is None:
+        end_time = time.time()
+    return await provider_db.get_records_by_time_range(start_time, end_time, info_type)

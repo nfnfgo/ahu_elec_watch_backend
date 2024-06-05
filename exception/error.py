@@ -115,3 +115,19 @@ class TokenError(BaseError):
             message=final_message,
             status=401
         )
+
+
+class ParamError(BaseError):
+    """
+    Raise when the receiving parameters are illegal.
+
+    Notice, the general param type error will be caught and dealt by FastAPI.
+    This Error is used when FastAPI couldn't deal with such error.
+    """
+
+    def __init__(self, param_name: str, message: str) -> None:
+        super().__init__(
+            'param_error',
+            f'Param error, "{param_name}": {message}',
+            400,
+        )

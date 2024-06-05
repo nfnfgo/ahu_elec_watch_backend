@@ -1,9 +1,10 @@
 import time
 from enum import Enum
 
+from loguru import logger
 from sqlalchemy.orm import mapped_column, Mapped
 from sqlalchemy import BIGINT
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .sql import SQLBaseModel
 
@@ -21,6 +22,12 @@ class BalanceRecord(BaseModel):
 
     # Current balance in ac account
     ac_balance: float = 0
+
+    @field_validator('light_balance', 'ac_balance')
+    @classmethod
+    def value_round(cls, value: float):
+        # logger.debug(f'Custom Validator Called, Rounding Number: {value} --> {round(value, 2)}')
+        return round(value, 2)
 
     @classmethod
     def from_info_dict(cls, info_dict):
@@ -88,7 +95,6 @@ class RecordDataType(str, Enum):
     usage: str = 'usage'
 
 
-
 class PeriodUsageInfoOut(BaseModel):
     """
     Define the daily usage info return type.
@@ -102,3 +108,20 @@ class PeriodUsageInfoOut(BaseModel):
     end_time: int
     ac_usage: float
     light_usage: float
+
+
+class UsageConvertConfig(BaseModel):
+    """
+    Used to store the param of converting record_list to usage list.
+
+    - ``spreading`` If `true`, implement point spreading.
+    - ``smoothing`` If `true`, implement points smoothing.
+    - ``per_hour_usage``: If `true`, the usage list value will use `usage/h` as unit.
+    - ``use_smart_merge``: If `true`, implement smart merge with auto calculated merge ratio.
+    - ``merge_ratio``: If NOT `None`, using this merge ratio when implementing smart merge instead of the default one.
+    """
+    spreading: bool = True
+    smoothing: bool = True
+    per_hour_usage: bool = True
+    use_smart_merge: bool = True
+    merge_ratio: int | None = None

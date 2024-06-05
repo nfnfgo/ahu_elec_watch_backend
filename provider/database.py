@@ -1,3 +1,4 @@
+import math
 import time
 import datetime
 import functools
@@ -242,10 +243,11 @@ async def get_statistics() -> elec_schema.Statistics:
 
 def convert_balance_list_to_usage_list(
         record_list: list[BalanceRecord | SQLRecord],
-        point_spreading: bool = True,
-        smoothing: bool = True,
-        per_hour_usage: bool = True,
-        point_merge_ratio: int | None = None,
+        # point_spreading: bool = True,
+        # smoothing: bool = True,
+        # per_hour_usage: bool = True,
+        # point_merge_ratio: int | None = None,
+        usage_convert_config: elec_schema.UsageConvertConfig,
 
 ) -> list[BalanceRecord | SQLRecord]:
     """
@@ -254,6 +256,7 @@ def convert_balance_list_to_usage_list(
     Parameters:
 
     - ``record_list`` List of records. Could be ``BalanceRecord`` or ``SQLRecord``.
+    - ``usage_convert_config``: Configs when converting record list. Check out `UsageConvertConfig` for more info.
 
     Notice the timestamp of passed ``record_list`` must be ascending.
 
@@ -261,19 +264,20 @@ def convert_balance_list_to_usage_list(
     will NOT cause the data change in database**. For example you shouldn't passing object that
     got while using ``session.begin()`` context manager.
 
-    - ``per_hour_usage`` If `true`, the value will convert to unit (usage/hour) and no longer represent usage at that time.
-    - ``point_spreading`` If `true`, implement point spreading to the usage list.
-    - ``smoothing`` If `true`, implement smoothing to the usage list.
-    - ``point_merge_ratio`` If not None, then implement smart point merge with this given ratio.
-
-    Notice, the process will be executed as the same order as the one they in param list.
+    Notice, the process will be executed as the same order as the one they in config model.
 
 
 
     Returns:
 
-    List with same element type when you passed in.
+    List with element type of `BalanceRecord` or `SQLRecord`.
     """
+    # ensure config received
+    if usage_convert_config is None:
+        raise exc.ParamError(
+            'usage_convert_config',
+            'Must provide convert config to usage convert function', )
+
     size = len(record_list)
     # Don't deal with empty list
     if size == 0:
@@ -285,26 +289,27 @@ def convert_balance_list_to_usage_list(
         record_list[i].light_balance = max(0.0, record_list[i - 1].light_balance - record_list[i].light_balance)
         record_list[i].ac_balance = max(0.0, record_list[i - 1].ac_balance - record_list[i].ac_balance)
 
-    # for more info about balance / usage calculation, check out docs/usage_calc.md
-    # In which, it described why the first info of the list should be set to zero.
+    # set the first usage record data to zero.
+    # for more info about why doing this, check out docs/usage_calc.md
     record_list[0].ac_balance = 0
     record_list[0].light_balance = 0
 
-    if point_spreading:
+    if usage_convert_config.spreading:
         record_list = usage_list_point_spreading(record_list=record_list)
 
-    if smoothing:
+    if usage_convert_config.smoothing:
         record_list = usage_list_smoothing(record_list=record_list)
 
-    if per_hour_usage:
+    if usage_convert_config.per_hour_usage:
         factor: float = config.general.BACKEND_CATCH_TIME_DURATION_MIN / 60
         factor = 1 / factor
         for i in range(len(record_list)):
             record_list[i].light_balance = record_list[i].light_balance * factor
             record_list[i].ac_balance = record_list[i].ac_balance * factor
 
-    if point_merge_ratio is not None:
-        record_list = smart_points_merge(record_list=record_list, merge_ratio=point_merge_ratio)
+    if usage_convert_config.use_smart_merge:
+        # here None merge_ratio param is allowed, which will cause smart_point_merge() to find out smart ratio automatically.
+        record_list = smart_points_merge(record_list=record_list, merge_ratio=usage_convert_config.merge_ratio)
 
     return record_list
 
@@ -429,12 +434,13 @@ def usage_list_smoothing(record_list: list[SQLRecord | BalanceRecord]) -> list[S
 
 def smart_points_merge(
         record_list: list[SQLRecord | BalanceRecord],
-        merge_ratio: int,
+        merge_ratio: int | None,
 ):
     """
     Implement smart usage point merge on received usage record list.
 
     Parameters:
+
     - ``record_list``: The original `record_list`, required ascending timestamp.
     - ``merge_ratio``: How many original points will be merged into a new single point. positive ``int`` value
 
@@ -443,16 +449,19 @@ def smart_points_merge(
     - New `BalanceRecord` list (when received list len >= `merge_ratio`)
     - Original list. When `ratio == 1`, or list len < `merge_ratio`
     """
+    # use auto calculated default ratio
+    if merge_ratio is None:
+        # calculate default merge ratio use day as density standard
+        time_range = record_list[-1].timestamp - record_list[0].timestamp
+        merge_ratio = math.floor(time_range / (24 * 60 * 60))
+
+    merge_ratio = int(merge_ratio)
+    merge_ratio = max(1, merge_ratio)
+
     # the case we directly return original list.
     list_len = len(record_list)
     if merge_ratio == 1 or list_len < merge_ratio:
         return record_list
-
-    merge_ratio = int(merge_ratio)
-    merge_ratio = max(0, merge_ratio)
-
-    logger.debug('Merge Ratio')
-    logger.debug(merge_ratio)
 
     new_record_list: list[BalanceRecord] = []
 
@@ -483,25 +492,13 @@ def smart_points_merge(
 
 async def get_recent_records(
         days: int,
-        info_type: elec_schema.RecordDataType,
-        point_spreading: bool = True,
-        smoothing: bool = True,
-        per_hour_usage: bool = True,
-        use_smart_merge: bool = True,
+        usage_convert_config: elec_schema.UsageConvertConfig,
 ) -> list[SQLRecord]:
     """
     Get all the records in recent days.
 
     - ``days`` The days you want to get records starts from.
-    - ``info_type`` The return type of the data list. Check `RecordDataType` for more info.
-    - ``point_spreading`` If `true`, implement point spreading to the usage list.
-    - ``smoothing`` If `true`, implement smoothing to the usage list.
-    - ``per_hour_usage`` If `true`, the value will convert to unit (usage/hour) and no longer represent usage at that time.
-
-    Notice, ``point_spreading`` and ``smoothing`` are only available when ``info_type`` is `usage`.
-
-    Notice, if ``point_spreading`` and ``smoothing`` are both `true`, then spreading will be implemented before
-    smoothing.
+    - ``usage_convert_config`` If not `None`, convert the balance list to usage list using this config.
 
     Returns:
 
@@ -509,29 +506,32 @@ async def get_recent_records(
     Notes that the list return is asc by timestamp, means old record in the beginning.
     """
     timestamp_day_ago: int = int(time.time()) - days * 24 * 60 * 60
-    stmt = select(SQLRecord).where(SQLRecord.timestamp >= timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
-    async with session_maker() as session:
-        try:
-            res = await session.scalars(stmt)
-            sql_obj_list: list[SQLRecord] = res.all()
-
-            ratio: int | None = None
-            if use_smart_merge:
-                ratio = days
-
-            # convert to usage list if required
-            if info_type == elec_schema.RecordDataType.usage:
-                return convert_balance_list_to_usage_list(
-                    sql_obj_list,
-                    per_hour_usage=per_hour_usage,
-                    point_spreading=point_spreading,
-                    smoothing=smoothing,
-                    point_merge_ratio=ratio,
-                )
-
-            return sql_obj_list
-        except sqlexc.NoSuchColumnError as e:
-            return []
+    return await get_records_by_time_range(start_time=timestamp_day_ago,
+                                           end_time=None,
+                                           usage_convert_config=usage_convert_config)
+    # stmt = select(SQLRecord).where(SQLRecord.timestamp >= timestamp_day_ago).order_by(SQLRecord.timestamp.asc())
+    # async with session_maker() as session:
+    #     try:
+    #         res = await session.scalars(stmt)
+    #         sql_obj_list: list[SQLRecord] = res.all()
+    #
+    #         ratio: int | None = None
+    #         if use_smart_merge:
+    #             ratio = days
+    #
+    #         # convert to usage list if required
+    #         if info_type == elec_schema.RecordDataType.usage:
+    #             return convert_balance_list_to_usage_list(
+    #                 sql_obj_list,
+    #                 per_hour_usage=per_hour_usage,
+    #                 point_spreading=point_spreading,
+    #                 smoothing=smoothing,
+    #                 point_merge_ratio=ratio,
+    #             )
+    #
+    #         return sql_obj_list
+    #     except sqlexc.NoSuchColumnError as e:
+    #         return []
 
 
 # deprecated
@@ -628,3 +628,82 @@ async def period_usage_list(
         result_list.reverse()
 
     return result_list
+
+
+def convert_to_model_record_list(record_list: list[BalanceRecord | SQLRecord]) -> list[BalanceRecord]:
+    """
+    Convert a mixed ``list[BalanceRecord | SQLRecord]`` to pure ``list[BalanceRecord]``
+
+    Converting to pure Pydantic Model list could promise all data is well validate including floating point rounding etc.
+    """
+    new_list: list[BalanceRecord] = []
+    for record in record_list:
+        new_list.append(BalanceRecord(
+            timestamp=record.timestamp,
+            light_balance=record.light_balance,
+            ac_balance=record.ac_balance,
+        ))
+    return new_list
+
+
+async def get_records_by_time_range(
+        start_time: int,
+        end_time: int | None,
+        usage_convert_config: elec_schema.UsageConvertConfig | None,
+) -> list[BalanceRecord | SQLRecord]:
+    """
+    Get all records during a specified time range.
+
+    Parameter:
+
+    - ``start_time``: Start of the time range. `int` UNIX timestamp.
+    - ``end_time``: End of the time range. `int` UNIX timestamp. If `None`, default to current timestamp.
+    - ``usage_convert_config``: If NOT `None`, use this config to convert balance record list to usage list.
+
+    Notice: ``end_time`` must be greater than or equal to ``start_time``.
+    """
+    # use default end time if None
+    if end_time is None:
+        end_time = int(time.time())
+
+    start_time = int(start_time)
+    end_time = int(end_time)
+
+    # end_time bigger than start_time
+    if end_time < start_time:
+        raise exc.ParamError(
+            'end_time',
+            'end_time should satisfy end_time >= start_time')
+
+    # time should be in the past
+    current_time = int(time.time())
+    if end_time > current_time:
+        raise exc.ParamError('end_time', 'end_time should be a time that in the past.')
+
+    # construct statement
+    stmt = select(SQLRecord).where(
+        and_(
+            SQLRecord.timestamp >= start_time,
+            SQLRecord.timestamp <= end_time,
+        )
+    ).order_by(SQLRecord.timestamp.asc())
+
+    async with session_maker() as session:
+        try:
+            res = await session.scalars(stmt)
+            record_list = res.all()
+            if record_list is None:
+                raise sqlexc.NoSuchColumnError()
+        except sqlexc.NoSuchColumnError as e:
+            record_list = []
+            # if the list is empty, no need to do convert anymore
+            return record_list
+
+        if usage_convert_config is not None:
+            record_list: list[SQLRecord | BalanceRecord] = record_list  # type anno
+            record_list = convert_balance_list_to_usage_list(
+                record_list=record_list,
+                usage_convert_config=usage_convert_config,
+            )
+
+        return convert_to_model_record_list(record_list=record_list)
