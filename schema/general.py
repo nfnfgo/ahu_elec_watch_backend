@@ -1,6 +1,12 @@
+from pydantic import BaseModel
 import time
 from datetime import datetime, timedelta
 from enum import Enum
+
+
+class BackendInfoOut(BaseModel):
+    version: str
+    on_cloud: bool
 
 
 class PeriodUnit(str, Enum):

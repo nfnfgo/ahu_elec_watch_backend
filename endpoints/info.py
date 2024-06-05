@@ -2,8 +2,9 @@ import time
 from enum import Enum
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Body, Depends
 
+import config.general
 from schema.electric import Statistics, BalanceRecord
 from provider.database import add_record, get_record_count
 from provider import database as provider_db
@@ -17,6 +18,14 @@ from exception import error as exc
 # Router for info
 # Notice that this router actually do NOT add any prefix
 infoRouter = APIRouter()
+
+
+@infoRouter.get('/api_info', response_model=gene_schema.BackendInfoOut)
+def get_backend_endpoint_version():
+    return gene_schema.BackendInfoOut(
+        version=config.general.BACKEND_API_VER,
+        on_cloud=config.general.ON_CLOUD,
+    )
 
 
 @infoRouter.get('/statistics', response_model=Statistics, tags=['Statistics'])
@@ -67,7 +76,7 @@ async def get_lastest_record():
 
 @infoRouter.post('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
 async def get_recent_days_records(
-        days: Annotated[int, Query(ge=1)] = 7,
+        days: Annotated[int, Body(ge=1)] = 7,
         usage_convert_config: elec_schema.UsageConvertConfig | None = None):
     """
     Here days actually has been converted to timstamp. That means the earliest limit is set by
