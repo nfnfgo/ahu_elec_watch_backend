@@ -334,7 +334,10 @@ def usage_list_point_spreading(
     if list_len < 2:
         return record_list
 
+    # spread point distance
     max_dis: int = config.general.POINT_SPREADING_DIS_LIMIT_MIN * 60
+    # point spreading threshold
+    spreading_dis: int = max_dis + config.general.POINT_SPREADING_TOLERANCE_MIN * 60
 
     # using a new temporary list to store the newly added point
     # Here use a new list because we can not mutate the list while iterating it.
@@ -343,8 +346,8 @@ def usage_list_point_spreading(
     for cur_idx in range(1, list_len):
         # calculate timestamp distance
         timestamp_diff: int = int(record_list[cur_idx].timestamp - record_list[cur_idx - 1].timestamp)
-        # no need for spreading
-        if timestamp_diff <= max_dis:
+        # no need for spreading, continue
+        if timestamp_diff <= spreading_dis:
             continue
 
         # calculate point count and new value
@@ -404,7 +407,7 @@ def usage_list_smoothing(record_list: list[SQLRecord | BalanceRecord]) -> list[S
         ac_balance=record_list[0].ac_balance,
     ))
 
-    for cur_idx in range(1, list_len - 2):
+    for cur_idx in range(1, list_len - 1):
         # create new record in the new list
         new_record_list.append(BalanceRecord())
 

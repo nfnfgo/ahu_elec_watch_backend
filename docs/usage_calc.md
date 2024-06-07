@@ -49,6 +49,48 @@ And we need to update the value of all newly added record (including the origina
 New value will be `record2.value / (new_point_count + 1)`. Here has a `+1` because we need to take the original
 `record2` into consideration.
 
+## Spreading Config
+
+There are 2 config value relavant to _Data Point Spreading_.
+
+- `POINT_SPREADING_DIS_LIMIT_MIN`
+- `POINT_SPREADING_DIS_TOLERANCE`
+
+**`POINT_SPREADING_DIS_LIMIT_MIN`**
+
+This config value is used to decide the minimum time distance between two adjacent points to trigger
+_Point Spreading_ operation. For example, if this value is `60`, then any point that have larger than 60 minutes
+distance from its previous point will be spread.
+
+Also, this value will be used as the distance between the spread points. For example, if a point has been spread to 
+3 differnet points, then the distance between this 3 points will all be `POINT_SPREADING_DIS_LIMIT_MIN` minutes.
+
+**`POINT_SPREADING_DIS_TOLERANCE`**
+
+Actually there is no such config value at first, but there has an issue:
+
+When the **distance between two adjacent points are slightly larger than the distance limit**, the point will be spread 
+to two new points, but actually it doesn't need to be spread.
+
+```
+[0min, 1.5]
+[30min1sec, 2.0]
+```
+
+Then the second point will be spread to two new points:
+
+```
+[0min, 1.5]
+[0min1sec, 1.0]
+[30min1sec, 1.0]
+```
+
+Obviously we don't want this result.
+
+So we decided to adding a _Tolerance_ when checking if a point need to be spread. If the distance is larger than the 
+distance limit, but the overed range part is not larger than _Tolerance_, we don't spread it. For example if the 
+tolerance is `5min`, then only a distance larger than `min_dis + tolerance = 35` will trigger the spreading.
+
 # Smart Point Merge
 
 When requesting the records of a long time range. _(For example request the usage info of last week)_, the points will
