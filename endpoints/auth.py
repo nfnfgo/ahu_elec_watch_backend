@@ -22,6 +22,7 @@ from schema.electric import Statistics, BalanceRecord
 from exception import error as exc
 
 from config import auth as auth_conf
+from config import general as gene_conf
 from exception import error as exc
 
 from schema.auth import TokenData
@@ -32,8 +33,15 @@ auth_router = APIRouter()
 def auth_and_gen_jwt(role_need_to_auth: auth_conf.RoleInfo) -> str:
     """
     Try to authenticate this user with input credentials.
+
+    Could be used as a Deps of FastAPI endpoints.
+
     :param role_need_to_auth: The auth credential.
     :return: The encoded jwt token for this user.
+
+    Exceptions:
+
+    - `auth_error` Error occurred when verify user's role with provided credentials.
     """
     # loop the valid role to check
     for valid_role in auth_conf.ROLE_LIST:
@@ -68,12 +76,22 @@ def require_role(
     The generated dependency function will return `True` if verify passed. Else raise ``TokenError``.
 
     :param role_list: A list of string represents the roles that could pass the verification.
+
+    Exceptions:
+
+    - `token_expired`
+    - `token_role_not_match`
+    - `token_required`
+
+    > Here exceptions means what error the generated dependency function may throw, not generator itself.
+
+    Checkout `TokenError` class for more info.
     """
 
     def generated_role_requirement_func(
             req: Request
     ):
-        jwt_str = req.cookies.get('session')
+        jwt_str = req.cookies.get(auth_conf.JWT_FRONTEND_COOKIE_KEY)
         if jwt_str is None:
             raise exc.TokenError(no_token=True)
 
@@ -97,19 +115,46 @@ async def login_into_account(
     Authenticate the credentials then return jwt token string
     and write cookies.
     """
-    resp.set_cookie(key='session', value=token)
+    resp.set_cookie(key=auth_conf.JWT_FRONTEND_COOKIE_KEY, value=token, max_age=30 * 24 * 60 * 60)
     return LoginTokenOut(token=token)
 
 
 @auth_router.get('/logout')
 async def logout_account(resp: Response):
-    resp.delete_cookie('session')
-    return JSONResponse(
+    resp = JSONResponse(
         status_code=200,
         content={'is_logged_out': True}
     )
+    resp.delete_cookie(key=auth_conf.JWT_FRONTEND_COOKIE_KEY)
+    return resp
+
+
+@auth_router.get('/me')
+async def get_current_user_info(role: Annotated[str, Depends(require_role(['admin', 'user']))]):
+    """
+    Return json contains role name if logged in, else raise error `token_required`
+
+    JSON Schema::
+
+        {
+            has_role: true,
+            role_name: str,
+        }
+
+    Exceptions:
+
+    - `token_expired`
+    - `token_role_not_match`
+    - `token_required`
+
+    Checkout `TokenError` class for more info.
+    """
+    return JSONResponse(content={
+        "has_role": True,
+        "role_name": role,
+    })
 
 
 @auth_router.post('/role_test')
-async def role_require_test(test=Depends(require_role(['admin']))):
+async def role_require_test(test: Annotated[str, Depends(require_role(['admin']))]):
     return test
