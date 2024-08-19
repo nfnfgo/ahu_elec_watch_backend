@@ -33,7 +33,7 @@ async def get_electrical_usage_statistic():
     return await provider_db.get_statistics()
 
 
-@infoRouter.post('/add_record', tags=['Record'])
+@infoRouter.post('/add_record', tags=['Records'])
 async def add_new_record(new_record: BalanceRecord, use_current_timestamp: bool = False):
     """
     Add a record into database.
@@ -50,7 +50,7 @@ async def add_new_record(new_record: BalanceRecord, use_current_timestamp: bool 
     await add_record(new_record)
 
 
-@infoRouter.get('/record_count', response_model=elec_schema.CountInfoOut, tags=['Record', 'Statistics'])
+@infoRouter.get('/record_count', response_model=elec_schema.CountInfoOut, tags=['Records', 'Statistics'])
 async def record_count():
     return await get_record_count()
 
@@ -58,23 +58,23 @@ async def record_count():
 @infoRouter.post(
     '/records',
     response_model=list[BalanceRecord],
-    tags=['Record'])
-async def get_record_list(pagination: PaginationConfig):
+    tags=['Records'])
+async def get_records_by_pagination(pagination: PaginationConfig):
     return await provider_db.get_records(pagination)
 
 
-@infoRouter.get('/latest_record', tags=['Record'], response_model=BalanceRecord)
+@infoRouter.get('/latest_record', tags=['Records'], response_model=BalanceRecord)
 async def get_lastest_record():
     res = await provider_db.get_records(
         pagination=PaginationConfig(size=1, index=0)
     )
     if len(res) == 0:
-        raise exc.NoResultError('No record in database')
+        raise exc.NoResultError('No record found in database.')
 
     return res[0]
 
 
-@infoRouter.post('/recent_records', tags=['Record'], response_model=list[BalanceRecord])
+@infoRouter.post('/recent_records', tags=['Records'], response_model=list[BalanceRecord])
 async def get_recent_days_records(
         days: Annotated[int, Body(ge=1)] = 7,
         usage_convert_config: elec_schema.UsageConvertConfig | None = None):
@@ -126,8 +126,12 @@ async def get_period_usage(
     )
 
 
-@infoRouter.get('/get_records_by_time_range')
-async def get_records_by_time_range(start_time: int, end_time: int | None, info_type: elec_schema.RecordDataType):
+@infoRouter.post('/get_records_by_time_range', tags=['Records'])
+async def get_records_by_time_range(
+        start_time: int,
+        end_time: int | None,
+        usage_convert_config: elec_schema.UsageConvertConfig,
+):
     """
     Get all records info in a specific time range.
 
@@ -142,4 +146,4 @@ async def get_records_by_time_range(start_time: int, end_time: int | None, info_
     """
     if end_time is None:
         end_time = time.time()
-    return await provider_db.get_records_by_time_range(start_time, end_time, info_type)
+    return await provider_db.get_records_by_time_range(start_time, end_time, usage_convert_config)

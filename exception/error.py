@@ -18,6 +18,10 @@ class BaseError(Exception):
         self.status = status
 
     def to_pydantic_base_error(self):
+        """
+        Wrapper for ``BaseErrorOut.from_base_error()``
+        :return:
+        """
         return BaseErrorOut.from_base_error(self)
 
 
@@ -74,6 +78,14 @@ class TokenError(BaseError):
     Raise when error occurred while verifying token.
 
     Check out __init__() for more info.
+
+    Params:
+
+    - `expired` Token expired.
+    - `role_not_match` Token exists, but role not match.
+    - `no_token` Pass `True` when error is occurred because of token could not be found.
+    - `message` If `None`, will automatically determined by the error cause. Use default if no cause provided.
+    - `message` If not `None`, always use the received one as final message despite presets of error cause.
     """
 
     def __init__(
@@ -130,4 +142,31 @@ class ParamError(BaseError):
             'param_error',
             f'Param error, "{param_name}": {message}',
             400,
+        )
+
+
+class AHUHeaderError(BaseError):
+    """
+    Raise when backend found the AHU Header Auth info is invalid.
+    """
+
+    def __init__(self):
+        super().__init__(
+            name='ahu_header_error',
+            message='AHU Header provided are invalid, data could not be retrieved from AHU website.',
+            status=404
+        )
+
+
+class AHUInfoParseError(BaseError):
+    """
+    Raise when could not successfully parse this info from AHU website return.
+    """
+
+    def __init__(self, received_text_info: str):
+        super().__init__(
+            name='ahu_parse_error',
+            message=f'Failed to parse the return info from AHU website on the server side. '
+                    f'Received text info is: {received_text_info}',
+            status=404,
         )

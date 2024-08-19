@@ -71,7 +71,7 @@ async def add_record(record_info: BalanceRecord):
     :return:
     """
     new_rec = SQLRecord(
-        timestamp=record_info.timestamp,
+        timestamp=int(record_info.timestamp),
         light_balance=record_info.light_balance,
         ac_balance=record_info.ac_balance,
     )

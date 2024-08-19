@@ -26,6 +26,11 @@ class BalanceRecord(BaseModel):
     @field_validator('light_balance', 'ac_balance')
     @classmethod
     def value_round(cls, value: float):
+        """
+        Class validator used to validate data to 2 point precision.
+        :param value:
+        :return:
+        """
         # logger.debug(f'Custom Validator Called, Rounding Number: {value} --> {round(value, 2)}')
         return round(value, 2)
 
