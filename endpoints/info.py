@@ -1,6 +1,6 @@
 import time
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query, Body, Depends
 
@@ -129,8 +129,8 @@ async def get_period_usage(
 @infoRouter.post('/get_records_by_time_range', tags=['Records'])
 async def get_records_by_time_range(
         start_time: int,
-        end_time: int | None,
-        usage_convert_config: elec_schema.UsageConvertConfig,
+        end_time: int | None = None,
+        usage_convert_config: Annotated[elec_schema.UsageConvertConfig, Body(embed=True)] = None,
 ):
     """
     Get all records info in a specific time range.
