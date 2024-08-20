@@ -2,18 +2,19 @@ import time
 
 from aiohttp import ClientSession
 import re
+from loguru import logger
+
 from schema.electric import BalanceRecord
 from config import dorm
 from exception import error as exc
-from loguru import logger
 
-aiohttp_session: ClientSession | None = ClientSession(base_url='https://ycard.ahu.edu.cn')
+aiohttp_session: ClientSession | None = None
 
 
-async def init_client_session(force_create: bool = False):
+async def init_client_session(force_create: bool = False) -> ClientSession:
     global aiohttp_session
     if aiohttp_session is None or force_create:
-        aiohttp_session = ClientSession(base_url='https://ycard.ahu.edu.cn')
+        aiohttp_session = ClientSession(base_url=dorm.AHU_WEBSITE)
     return aiohttp_session
 
 
@@ -66,8 +67,11 @@ async def get_record() -> dict:
     """
     light_balance: float = 0
     ac_balance: float = 0
+
+    session = await init_client_session()
+
     try:
-        async with aiohttp_session.post(
+        async with session.post(
                 url='/charge/feeitem/getThirdData',
                 data=dorm.DORM_LIGHT_INFO_DICT,
                 headers=dorm.get_ahu_header(),
@@ -75,7 +79,7 @@ async def get_record() -> dict:
             json = await res.json()
             light_balance = extract_balance(json)
 
-        async with aiohttp_session.post(
+        async with session.post(
                 url='/charge/feeitem/getThirdData',
                 data=dorm.DORM_AC_INFO_DICT,
                 headers=dorm.DORM_REQ_HEADER_DICT,
