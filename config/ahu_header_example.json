@@ -1,0 +1,4 @@
+{
+  "Authorization": "Basic yourOwnTokenInfoHere",
+  "synjones-auth": "bearer yourOwnAuthInfoHere"
+}

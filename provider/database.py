@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from loguru import logger
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy import select, func
+from sqlalchemy import select, func, Select
 from sqlalchemy.sql import and_, or_
 from sqlalchemy import exc as sqlexc
 
@@ -91,10 +91,9 @@ async def get_record_count() -> CountInfoOut:
             stmt = select(func.count(SQLRecord.timestamp)).distinct()
             timestamp_7_day_ago = time.time() - 7 * 24 * 60 * 60
             timestamp_7_day_ago = int(timestamp_7_day_ago)
-            print(timestamp_7_day_ago)
+
             stmt_last_7 = select(
                 func.count(SQLRecord.timestamp)).where(SQLRecord.timestamp > timestamp_7_day_ago)
-            print(stmt_last_7)
 
             # retrive data
             try:
@@ -710,3 +709,51 @@ async def get_records_by_time_range(
             )
 
         return convert_to_model_record_list(record_list=record_list)
+
+
+async def delete_records_by_time_range(start: int, end: int, dry_run: bool = False) -> int:
+    """
+    Remove records from database with specific time range [start, end] (Notice that end time included in range)
+
+    Params:
+
+    - ``start`` UNIX timestamp of the start time range.
+    - ``end`` UNIX timestamp of the end time range.
+    - ``dry_run`` If `True`, will only test the affected records count, and will NOT delete the records.
+
+    Returns:
+
+    - Total count of records deleted.
+    """
+
+    # legal check
+    if start > end:
+        raise exc.ParamError(
+            'end',
+            'End time must be greater than start time.'
+        )
+
+    # construct statement
+    stmt = select(SQLRecord).where(
+        and_(
+            SQLRecord.timestamp >= start,
+            SQLRecord.timestamp <= end,
+        ),
+    )
+
+    affected: int = 0
+
+    async with session_maker() as session:
+        async with session.begin():
+            res = (await session.scalars(stmt)).all()
+            affected = len(res)
+
+            # if dry run, return
+            if dry_run:
+                return affected
+
+            # delete records
+            for record in res:
+                await session.delete(record)
+
+    return affected

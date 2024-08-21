@@ -5,13 +5,14 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Query, Body, Depends
 
 import config.general
-from schema.electric import Statistics, BalanceRecord
 from provider.database import add_record, get_record_count
 from provider import database as provider_db
+from schema.electric import Statistics, BalanceRecord
 from schema.electric import BalanceRecord
 from schema import electric as elec_schema
 from schema import general as gene_schema
 from schema.sql import PaginationConfig
+from endpoints.auth import require_role
 
 from exception import error as exc
 
@@ -147,3 +148,30 @@ async def get_records_by_time_range(
     if end_time is None:
         end_time = time.time()
     return await provider_db.get_records_by_time_range(start_time, end_time, usage_convert_config)
+
+
+@infoRouter.get('/delete_records_by_time_range', tags=['Records'])
+async def delete_records_by_time_range(
+        start_time: int,
+        end_time: int,
+        role: Annotated[str, Depends(require_role(['admin']))],
+        dry_run: bool = False,
+) -> int:
+    """
+    Remove records from database with specific time range [start, end] (Notice that end time included in range)
+
+    Params:
+
+    - ``start`` UNIX timestamp of the start time range.
+    - ``end`` UNIX timestamp of the end time range.
+    - ``dry_run`` If `True`, will only test the affected records count, and will NOT delete the records.
+
+    Returns:
+
+    - Total count of records deleted.
+    """
+    return await provider_db.delete_records_by_time_range(
+        start_time,
+        end_time,
+        dry_run,
+    )

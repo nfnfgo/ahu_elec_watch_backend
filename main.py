@@ -7,6 +7,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.exception_handlers import http_exception_handler
 
 import uvicorn
+from loguru import logger
 
 from exception.error import BaseError, BaseErrorOut
 
@@ -47,6 +48,11 @@ async def test_error_handling(name: str, message: str, status: int):
 
 @app.exception_handler(BaseError)
 async def base_error_handler(request: Request, exc: BaseError):
+    """
+    An error handler used to handle all subclass of BaseError class.
+
+    BaseError is a custom base class for error raised in this application.
+    """
     return await http_exception_handler(request, HTTPException(
         status_code=exc.status,
         detail=exc.to_pydantic_base_error().model_dump()
@@ -59,6 +65,9 @@ if __name__ == "__main__":
     host = '127.0.0.1'
     if config.general.ON_CLOUD:
         host = '0.0.0.0'
+
+    # logger
+    logger.info(f'OnCloud: {config.general.ON_CLOUD}, using host: {host}')
 
     # start uvicorn server with directory monitor
     uvicorn.run(

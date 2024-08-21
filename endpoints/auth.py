@@ -73,7 +73,8 @@ def require_role(
     A dependency function generator used to generate a dependency function used by FastAPI to
     require a certain role.
 
-    The generated dependency function will return `True` if verify passed. Else raise ``TokenError``.
+    The generated dependency function will return the name of the role as a string
+    if verify passed. Else raise ``TokenError``.
 
     :param role_list: A list of string represents the roles that could pass the verification.
 
