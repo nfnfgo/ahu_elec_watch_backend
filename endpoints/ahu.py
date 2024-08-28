@@ -54,6 +54,12 @@ async def catch_record_from_ahu(dry_run: bool = True):
         - If `True`, only try to catch records and returns info to frontend,
         will NOT update database.
         - If `false`, means catch records, return info, then add record to database.
+
+    Returns:
+
+    - ``latency_ms`` The time consumed for requesting data from AHU website and pydantic validation.
+    The database operation when `dry_run=False` is not included in this field.
+
     """
     start_req = time.time()
     record_info: elec_schema.BalanceRecord = elec_schema.BalanceRecord.from_info_dict(await provider.ahu.get_record())
