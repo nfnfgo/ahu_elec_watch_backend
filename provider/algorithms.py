@@ -9,8 +9,7 @@ from schema.electric import BalanceRecord, SQLRecord
 def convert_balance_list_to_usage_list(
         record_list: list[BalanceRecord | SQLRecord],
         usage_convert_config: elec_schema.UsageConvertConfig,
-
-) -> list[BalanceRecord | SQLRecord]:
+) -> list[BalanceRecord]:
     """
     Convert the balance info to usage info of a record list by doing difference calculation.
 
@@ -24,20 +23,20 @@ def convert_balance_list_to_usage_list(
     Notices:
 
     - The timestamp of passed ``record_list`` must be ascending.
-    - When passing ``SQLRecord`` type object list, **make sure that mutating these object in list
-      will NOT cause the data change in database**. For example, you should NOT pass object that
-      got while using ``session.begin()`` context manager.
     - The process will be executed as the same order as the one they are in config model.
 
     Returns:
 
-    List with element type of `BalanceRecord` or `SQLRecord`.
+    A new list with element type of `BalanceRecord` or `SQLRecord`.
     """
     # ensure config received
     if usage_convert_config is None:
         raise exc.ParamError(
             'usage_convert_config',
-            'Must provide convert config to usage convert function', )
+            'Must provide a valid convert config to usage convert function')
+
+    # create completely new list
+    record_list = convert_to_model_record_list(record_list)
 
     size = len(record_list)
     # Don't deal with empty list
@@ -55,6 +54,8 @@ def convert_balance_list_to_usage_list(
     record_list[0].ac_balance = 0
     record_list[0].light_balance = 0
 
+    # post process of record list
+
     if usage_convert_config.spreading:
         record_list = usage_list_point_spreading(record_list=record_list)
 
@@ -68,6 +69,9 @@ def convert_balance_list_to_usage_list(
 
     if usage_convert_config.per_hour_usage:
         record_list = usage_list_unit_convert_to_per_hour(record_list)
+
+    if usage_convert_config.remove_first_point:
+        record_list = record_list[1:]
 
     return record_list
 
@@ -317,10 +321,14 @@ def convert_to_model_record_list(record_list: list[BalanceRecord | SQLRecord]) -
     """
     Convert a mixed list[BalanceRecord | SQLRecord to pure list[BalanceRecord]
 
+    Return:
+
+    - A new list with all elements are ``BalanceRecord``
+
     Notice:
 
     - Converting to pure Pydantic Model list could promise
-    all data is well validate including floating point rounding etc.
+      all data is well validate including floating point rounding and other fields.
     """
     new_list: list[BalanceRecord] = []
     for record in record_list:

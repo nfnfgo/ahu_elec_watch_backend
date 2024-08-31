@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 from enum import Enum
 
 from loguru import logger
@@ -128,12 +129,14 @@ class UsageConvertConfig(BaseModel):
     - ``merge_ratio``: If NOT `None`, using this merge ratio when implementing smart merge instead of the default one.
     - ``smoothing`` If `true`, implement points smoothing.
     - ``per_hour_usage``: If `true`, the usage list value will use `usage/h` as unit.
+    - ``remove_first_point`` If `true`, will remove the first point, since it will not contain any useful usage info.
     """
     spreading: bool = True
     use_smart_merge: bool = True
     merge_ratio: int | None = None
     smoothing: bool = True
     per_hour_usage: bool = True
+    remove_first_point: bool = True
 
 
 class TimeRangeStatistics(BaseModel):

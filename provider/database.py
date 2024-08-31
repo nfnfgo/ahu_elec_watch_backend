@@ -383,17 +383,25 @@ async def get_records_by_time_range(
         start_time: int,
         end_time: int | None,
         usage_convert_config: elec_schema.UsageConvertConfig | None,
-) -> list[BalanceRecord | SQLRecord]:
+) -> list[BalanceRecord]:
     """
     Get all records during a specified time range.
 
-    Parameter:
+    Parameters:
 
     - ``start_time``: Start of the time range. `int` UNIX timestamp.
     - ``end_time``: End of the time range. `int` UNIX timestamp. If `None`, default to current timestamp.
     - ``usage_convert_config``: If NOT `None`, use this config to convert balance record list to usage list.
 
-    Notice: ``end_time`` must be greater than or equal to ``start_time``.
+    Return:
+
+    - A list of ``BalanceRecord`` with ascending timestamp.
+
+    Notice:
+
+    - ``end_time`` must be greater than or equal to ``start_time``.
+    - If need to convert to usage list (``usage_convert_config`` is not None), then the input and output should also
+      follow the standard of the convert function.
     """
     # use default end time if None
     if end_time is None:
@@ -419,7 +427,7 @@ async def get_records_by_time_range(
             SQLRecord.timestamp >= start_time,
             SQLRecord.timestamp <= end_time,
         )
-    ).order_by(SQLRecord.timestamp.asc())
+    ).order_by(SQLRecord.timestamp.asc())  # ensure timestamps are ascending
 
     async with session_maker() as session:
         try:
@@ -432,6 +440,7 @@ async def get_records_by_time_range(
             # if the list is empty, no need to do convert anymore
             return record_list
 
+        # if config not None, convert to usage list
         if usage_convert_config is not None:
             record_list: list[SQLRecord | BalanceRecord] = record_list  # type anno
             record_list = convert_balance_list_to_usage_list(
@@ -488,3 +497,36 @@ async def delete_records_by_time_range(start: int, end: int, dry_run: bool = Fal
                 await session.delete(record)
 
     return affected
+
+
+async def get_statistics_by_time_range(start_time: int, end_time: int):
+    """
+    Get statistics info of a specific time range.
+
+    Parameters:
+
+    - ``start`` UNIX timestamp of the start time range.
+    - ``end`` UNIX timestamp of the end time range.
+    """
+
+    # get usage list
+    usage_list: list[BalanceRecord] = await get_records_by_time_range(
+        start_time, end_time,
+        usage_convert_config=elec_schema.UsageConvertConfig(
+            spreading=True,
+            use_smart_merge=True,
+            merge_ratio=None,
+            smoothing=False,
+            per_hour_usage=False,
+            remove_first_point=True,
+        ))
+
+    # calculate total usage
+    total_light: float = 0
+    total_ac: float = 0
+    for usage_item in usage_list:
+        total_light += usage_item.light_balance
+        total_ac += usage_item.ac_balance
+
+    # calculate hour distance
+    hour_distance: int = int((usage_list[-1].timestamp - usage_list[0].timestamp) / 3600)
