@@ -93,8 +93,10 @@ class RecordDataType(str, Enum):
 
     For each record in the return list:
 
-    - `balance` Returns the balance of that timestamp.
-    - `usage` Returns the usage during the previous record and current record.
+    Returns:
+
+    - ``balance`` Returns the balance of that timestamp.
+    - ``usage`` Returns the usage during the previous record and current record.
     """
     balance: str = 'balance'
     usage: str = 'usage'
@@ -119,14 +121,21 @@ class UsageConvertConfig(BaseModel):
     """
     Used to store the param of converting record_list to usage list.
 
+    Parameters:
+
     - ``spreading`` If `true`, implement point spreading.
-    - ``smoothing`` If `true`, implement points smoothing.
-    - ``per_hour_usage``: If `true`, the usage list value will use `usage/h` as unit.
     - ``use_smart_merge``: If `true`, implement smart merge with auto calculated merge ratio.
     - ``merge_ratio``: If NOT `None`, using this merge ratio when implementing smart merge instead of the default one.
+    - ``smoothing`` If `true`, implement points smoothing.
+    - ``per_hour_usage``: If `true`, the usage list value will use `usage/h` as unit.
     """
     spreading: bool = True
-    smoothing: bool = True
-    per_hour_usage: bool = True
     use_smart_merge: bool = True
     merge_ratio: int | None = None
+    smoothing: bool = True
+    per_hour_usage: bool = True
+
+
+class TimeRangeStatistics(BaseModel):
+    total_usage: float
+    avg_usage: float

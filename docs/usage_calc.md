@@ -51,26 +51,26 @@ New value will be `record2.value / (new_point_count + 1)`. Here has a `+1` becau
 
 ## Spreading Config
 
-There are 2 config value relavant to _Data Point Spreading_.
+There are 2 config value relevant to _Data Point Spreading_.
 
 - `POINT_SPREADING_DIS_LIMIT_MIN`
 - `POINT_SPREADING_DIS_TOLERANCE`
 
 **`POINT_SPREADING_DIS_LIMIT_MIN`**
 
-This config value is used to decide the minimum time distance between two adjacent points to trigger
+This config value is used to decide the theoretically minimum time distance between two adjacent points to trigger
 _Point Spreading_ operation. For example, if this value is `60`, then any point that have larger than 60 minutes
-distance from its previous point will be spread.
+distance from its previous point should be spread.
 
-Also, this value will be used as the distance between the spread points. For example, if a point has been spread to 
-3 differnet points, then the distance between this 3 points will all be `POINT_SPREADING_DIS_LIMIT_MIN` minutes.
+Also, this value will be used as the **distance between the spread points**. For example, if a point has been spread to
+3 different points, then the distance between this 3 points will all be `POINT_SPREADING_DIS_LIMIT_MIN` minutes.
 
 **`POINT_SPREADING_DIS_TOLERANCE`**
 
-Actually there is no such config value at first, but there has an issue:
-
-When the **distance between two adjacent points are slightly larger than the distance limit**, the point will be spread 
-to two new points, but actually it doesn't need to be spread.
+Only considering the previous parameter could cause issue,
+when the **distance between two adjacent points are slightly larger than the distance limit**,
+the point will be spread to two new points, but actually it **doesn't need to be spread**.
+Check out the example below:
 
 ```
 [0min, 1.5]
@@ -81,15 +81,19 @@ Then the second point will be spread to two new points:
 
 ```
 [0min, 1.5]
-[0min1sec, 1.0]
+[0min1sec, 1.0]   <--- Really close to the first point after spreading.
 [30min1sec, 1.0]
 ```
 
 Obviously we don't want this result.
 
-So we decided to adding a _Tolerance_ when checking if a point need to be spread. If the distance is larger than the 
-distance limit, but the overed range part is not larger than _Tolerance_, we don't spread it. For example if the 
-tolerance is `5min`, then only a distance larger than `min_dis + tolerance = 35` will trigger the spreading.
+So we decided to **adding a tolerance when checking if a point need to be spread**.
+Now only the point that have distance larger then `POINT_SPREADING_DIS_LIMIT_MIN + POINT_SPREADING_DIS_TOLERANCE`
+would trigger Data Point Spreading operation.
+Notice the **distance between spread point won't be affected by tolerance**.
+
+For example if the tolerance is `5min`, then only a distance larger than `min_dis + tolerance = 35`
+will trigger the spreading. And the distance between newly spread point is still `min_dis = 30`
 
 # Smart Point Merge
 
@@ -111,11 +115,17 @@ Then, if we merged it into one point, it would be:
 [3, 300]
 ```
 
-We use the the latest timestamp among this point. Here this decision actually may not be the perfect one, since in
-this case the usage will seem delayed. But I still implemented this at first since I don't know if there will be a
-better choice.
+## Timestamp Of The New Point
 
-The value `300` is simply the averge of the value of all original points.
+Currently, the **timestamp of the latest point being merged** would be used as the timestamp of the new point. In this case, the usage statistics may has some delay compared to reality.
+
+## Value Of The New Point
+
+If `usage_pre_hour` is `enabled`, we could simply using the **average value of all the points as the new value**.
+However, this may not be so accurate, since the **distance of this three points may not be the same**,
+and we should consider the **point with longer distance before it has a larger weight** when calculating average.
+
+If `usage_pre_hour` is `disabled`, we could accumulate all the usage value of the old points to get a completely correct new value for the merged point.
 
 ## Merge Ratio
 
@@ -126,3 +136,47 @@ original density.
 
 For example, if there are `24` points per day _(which means catch frequency is 2 times an hour)_, then we should
 merge `3` points into one when user requesting a _3 Days_ period usage to keep a `24` point per view density standard.
+
+# Unit Converting
+
+We may want to **convert the unit to Usage/Hour** when output the final usage list.
+In this case, the new point value could be calculate using following approach.
+
+```
+timestamp_distance = timestamp_this_point - timestamp_prev_point
+hour_distance = timestamp_distance / (60 * 60)
+new_usage_value = prev_value / hour_distance
+```
+
+`time_distance` is the **time distance between current usage point and the previous usage point** before this point. The **unit should be converted to hours**.
+
+----
+
+For example, we have two points:
+
+```
+1: {timestamp: 0,    usage: 23.00}
+2: {timestamp: 7200, usage: 60.00}
+```
+
+> Notice that the usage data structure has been simplified.
+
+In this case, the `hour_distance` would be:
+
+```
+hour_distance = 7200 / (60*60)
+              = 7200 / 3600
+              = 2
+```
+
+Then the new value:
+
+```
+new_value = prev_value / hour_distance
+          = 60.00 / 2
+          = 30.00 (Unit: kWh/Hour)
+```
+
+> Notice that for **first point** in usage list, we **couldn't convert the unit** for it, 
+> since we **don't know the distance between that point and its previous point**.
+

@@ -18,6 +18,7 @@ def convert_balance_list_to_usage_list(
 
     - ``record_list`` List of records. Could be ``BalanceRecord`` or ``SQLRecord``.
     - ``usage_convert_config`` Configs used when converting record list.
+
     Check out ``UsageConvertConfig`` for more info.
 
     Notices:
@@ -57,20 +58,66 @@ def convert_balance_list_to_usage_list(
     if usage_convert_config.spreading:
         record_list = usage_list_point_spreading(record_list=record_list)
 
+    if usage_convert_config.use_smart_merge:
+        # here None merge_ratio param is allowed
+        # which will cause smart_point_merge() to find out smart ratio automatically.
+        record_list = smart_points_merge(record_list=record_list, merge_ratio=usage_convert_config.merge_ratio)
+
     if usage_convert_config.smoothing:
         record_list = usage_list_smoothing(record_list=record_list)
 
     if usage_convert_config.per_hour_usage:
-        factor: float = config.general.BACKEND_CATCH_TIME_DURATION_MIN / 60
-        factor = 1 / factor
-        for i in range(len(record_list)):
-            record_list[i].light_balance = record_list[i].light_balance * factor
-            record_list[i].ac_balance = record_list[i].ac_balance * factor
+        record_list = usage_list_unit_convert_to_per_hour(record_list)
 
-    if usage_convert_config.use_smart_merge:
-        # here None merge_ratio param is allowed, which will cause smart_point_merge() to find out smart ratio automatically.
-        record_list = smart_points_merge(record_list=record_list, merge_ratio=usage_convert_config.merge_ratio)
+    return record_list
 
+
+def usage_list_unit_convert_to_per_hour(
+        record_list: list[SQLRecord | BalanceRecord]) -> list[BalanceRecord | SQLRecord]:
+    """
+    Convert the usage list to make the unit become `Usage/Hour`.
+
+    Parameters:
+
+    - ``record_list`` The usage list.
+
+    Returns:
+
+    - List with unit kWh/Hour. Notice that the **original list is also being modified in place**
+
+    Notice:
+
+    - The unit of the first point could not be converted, and would be set to zero
+    - For more info, check out ``docs/usage_calc.md``
+    """
+    # get size and validate size
+    size = len(record_list)
+    if size == 0:
+        return record_list
+
+    # set the usage of first point to zero
+    record_list[0].ac_balance = 0
+    record_list[0].light_balance = 0
+
+    # iterate rest of the points
+    for idx in range(1, size):
+        # get the record we need to process
+        curr_record = record_list[idx]
+        prev_record = record_list[idx - 1]
+
+        # calculate hour distance
+        timestamp_distance = curr_record.timestamp - prev_record.timestamp
+        hour_distance = timestamp_distance / 3600
+
+        # calculate the value in hour unit
+        ac_hour = curr_record.ac_balance / hour_distance
+        light_hour = curr_record.light_balance / hour_distance
+
+        # update value
+        curr_record.ac_balance = ac_hour
+        curr_record.light_balance = light_hour
+
+    # return proceeded list
     return record_list
 
 
@@ -198,7 +245,7 @@ def usage_list_smoothing(record_list: list[SQLRecord | BalanceRecord]) -> list[S
 def smart_points_merge(
         record_list: list[SQLRecord | BalanceRecord],
         merge_ratio: int | None,
-):
+) -> list[BalanceRecord | SQLRecord]:
     """
     Implement smart usage point merge on received usage record list.
 
@@ -210,7 +257,13 @@ def smart_points_merge(
     Returns:
 
     - New `BalanceRecord` list (when received list len >= `merge_ratio`)
-    - Original list. When `ratio == 1`, or list len < `merge_ratio`
+    - Original list. When `ratio==1`, or `list_len < merge_ratio`
+
+    Notice:
+
+    - When merging point, the **usage data will be accumulated instead of calculating the average**.
+      This may cause issue if the input usage list uses `Usage/Hour` as the unit.
+      This means the Pre Hour Unit Converting should be performed after Smart Point Merge.
     """
     # use auto calculated default ratio
     if merge_ratio is None:
@@ -218,36 +271,43 @@ def smart_points_merge(
         time_range = record_list[-1].timestamp - record_list[0].timestamp
         merge_ratio = math.floor(time_range / (24 * 60 * 60))
 
+    # merge ratio should be integer
+    # merge ratio should >= 1
     merge_ratio = int(merge_ratio)
     merge_ratio = max(1, merge_ratio)
 
     # the case we directly return original list.
+    # 1. The merge ratio is 1, which means don't need to merge.
+    # 2. length of the list less than merge ratio. Means the number of points is too few to perform merge.
     list_len = len(record_list)
     if merge_ratio == 1 or list_len < merge_ratio:
         return record_list
 
     new_record_list: list[BalanceRecord] = []
 
+    # iterate all usage points, with step == merge_ratio
     for cur_idx in range(0, list_len, merge_ratio):
         max_offset: int = min(merge_ratio, list_len - cur_idx)
 
+        # initialize
         sum_ac: float = 0
         sum_light: float = 0
         loop_count: int = 0
 
+        # accumulate usage of the points that being merged.
         for i in range(0, max_offset):
             sum_ac += record_list[cur_idx + i].ac_balance
             sum_light += record_list[cur_idx + i].light_balance
             loop_count += 1
 
-        avg_ac = sum_ac / loop_count
-        avg_light = sum_light / loop_count
+        # use the timestamp of the latest record point.
         last_timestamp = record_list[cur_idx + max_offset - 1].timestamp
 
+        # use the accumulated usage status and latest timestamp to create a new usage record point.
         new_record_list.append(BalanceRecord(
             timestamp=last_timestamp,
-            light_balance=avg_light,
-            ac_balance=avg_ac,
+            light_balance=sum_light,
+            ac_balance=sum_ac,
         ))
 
     return new_record_list
@@ -255,9 +315,12 @@ def smart_points_merge(
 
 def convert_to_model_record_list(record_list: list[BalanceRecord | SQLRecord]) -> list[BalanceRecord]:
     """
-    Convert a mixed ``list[BalanceRecord | SQLRecord]`` to pure ``list[BalanceRecord]``
+    Convert a mixed list[BalanceRecord | SQLRecord to pure list[BalanceRecord]
 
-    Converting to pure Pydantic Model list could promise all data is well validate including floating point rounding etc.
+    Notice:
+
+    - Converting to pure Pydantic Model list could promise
+    all data is well validate including floating point rounding etc.
     """
     new_list: list[BalanceRecord] = []
     for record in record_list:
