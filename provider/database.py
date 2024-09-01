@@ -520,6 +520,10 @@ async def get_statistics_by_time_range(start_time: int, end_time: int | None = N
             remove_first_point=True,
         ))
 
+    # get balance list
+    record_list = await get_records_by_time_range(start_time, end_time, usage_convert_config=None)
+    point_used = len(record_list)
+
     # calculate total usage
     total_light: float = 0
     total_ac: float = 0
@@ -543,4 +547,5 @@ async def get_statistics_by_time_range(start_time: int, end_time: int | None = N
         avg_usage_ac=avg_ac,
         start_timestamp=start_timestamp,
         end_timestamp=end_timestamp,
+        point_used=point_used,
     )

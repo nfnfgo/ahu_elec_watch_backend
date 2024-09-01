@@ -153,6 +153,7 @@ class TimeRangeStatistics(BaseModel):
     avg_usage_ac: float
     start_timestamp: int
     end_timestamp: int
+    point_used: int
 
     @field_validator('total_usage_light', 'total_usage_ac', 'avg_usage_light', 'avg_usage_ac')
     @classmethod
