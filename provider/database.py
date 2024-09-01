@@ -12,7 +12,8 @@ from exception import error as exc
 from config import sql
 from provider.algorithms import (
     convert_balance_list_to_usage_list,
-    convert_to_model_record_list
+    convert_to_model_record_list,
+    time_range_checker,
 )
 
 from schema.electric import SQLRecord, BalanceRecord, CountInfoOut, PeriodUsageInfoOut
@@ -467,11 +468,7 @@ async def delete_records_by_time_range(start: int, end: int, dry_run: bool = Fal
     """
 
     # legal check
-    if start > end:
-        raise exc.ParamError(
-            'end',
-            'End time must be greater than start time.'
-        )
+    time_range_checker(start, end)
 
     # construct statement
     stmt = select(SQLRecord).where(
@@ -499,7 +496,7 @@ async def delete_records_by_time_range(start: int, end: int, dry_run: bool = Fal
     return affected
 
 
-async def get_statistics_by_time_range(start_time: int, end_time: int):
+async def get_statistics_by_time_range(start_time: int, end_time: int | None = None) -> elec_schema.TimeRangeStatistics:
     """
     Get statistics info of a specific time range.
 
@@ -508,6 +505,8 @@ async def get_statistics_by_time_range(start_time: int, end_time: int):
     - ``start`` UNIX timestamp of the start time range.
     - ``end`` UNIX timestamp of the end time range.
     """
+
+    time_range_checker(start_time, end_time)
 
     # get usage list
     usage_list: list[BalanceRecord] = await get_records_by_time_range(
@@ -529,4 +528,19 @@ async def get_statistics_by_time_range(start_time: int, end_time: int):
         total_ac += usage_item.ac_balance
 
     # calculate hour distance
-    hour_distance: int = int((usage_list[-1].timestamp - usage_list[0].timestamp) / 3600)
+    start_timestamp = int(usage_list[0].timestamp)
+    end_timestamp = int(usage_list[-1].timestamp)
+    hour_distance: int = int((end_timestamp - start_timestamp) / 3600)
+
+    # calculate avg
+    avg_ac: float = total_ac / hour_distance
+    avg_light: float = total_light / hour_distance
+
+    return elec_schema.TimeRangeStatistics(
+        total_usage_light=total_light,
+        total_usage_ac=total_ac,
+        avg_usage_light=avg_light,
+        avg_usage_ac=avg_ac,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )

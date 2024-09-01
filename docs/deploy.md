@@ -72,6 +72,9 @@ section. Then you will see the info you need.
 ![image](https://github.com/user-attachments/assets/22d83ea5-5f2c-4215-a8ba-33fa41eaed49)
 
 > You may need to repeat the above operation twice time to get both "Illumination" and "Air Conditioner" info.
+> 
+> - `DORM_LIGHT_INFO_DICT` is used to retrieve illumination fee.
+> - `DORM_AC_INFO_DICT` is used to retrieve air conditioner fee.
 
 Then fill the `DORM_LIGHT_INFO_DICT` and `DORM_AC_INFO_DICT` in `config/dorm.py` based on the info you get.
 
@@ -102,7 +105,15 @@ Run following command to initailize the database:
 python create_db.py
 ```
 
-> Notice: Make sure you have correctly configured `config/sql.py` before initializing database.
+> Notice: Make sure you have **correctly configured `config/sql.py` before initializing database**. 
+> Otherwise the Python script would not be able to connect to the correct database.
+
+## TODO: One-step Configuration Extraction From AHU Website URL
+
+> This feature is not available for now, but may be added to this project in the future.
+
+Since all the info required above like `AHU Credential` and `Dormitory Configuration` info etc are all contained in the URL of AHU Website, 
+it's possible for **users to only provide a personal link to program and leave all other things to the program**.
 
 # Catch Records From AHU Website
 

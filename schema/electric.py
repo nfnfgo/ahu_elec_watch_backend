@@ -29,8 +29,6 @@ class BalanceRecord(BaseModel):
     def value_round(cls, value: float):
         """
         Class validator used to validate data to 2 point precision.
-        :param value:
-        :return:
         """
         # logger.debug(f'Custom Validator Called, Rounding Number: {value} --> {round(value, 2)}')
         return round(value, 2)
@@ -140,5 +138,23 @@ class UsageConvertConfig(BaseModel):
 
 
 class TimeRangeStatistics(BaseModel):
-    total_usage: float
-    avg_usage: float
+    """
+    Parameters:
+
+    - Check out the fields of this class.
+
+    Notice:
+
+    - The average field ``avg_usage_light`` and ``avg_usage_ac`` should have unit of kWh/Hour
+    """
+    total_usage_light: float
+    total_usage_ac: float
+    avg_usage_light: float
+    avg_usage_ac: float
+    start_timestamp: int
+    end_timestamp: int
+
+    @field_validator('total_usage_light', 'total_usage_ac', 'avg_usage_light', 'avg_usage_ac')
+    @classmethod
+    def rounding_result(cls, value: float):
+        return round(value, 2)

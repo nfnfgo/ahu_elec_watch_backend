@@ -176,3 +176,7 @@ async def delete_records_by_time_range(
         dry_run,
     )
 
+
+@infoRouter.get('/statistics/time_range', tags=['Statistics'], response_model=elec_schema.TimeRangeStatistics)
+async def get_statistics_of_specific_time_range(start: int, end: int | None = None):
+    return await provider_db.get_statistics_by_time_range(start, end)

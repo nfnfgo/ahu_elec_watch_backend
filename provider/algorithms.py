@@ -338,3 +338,19 @@ def convert_to_model_record_list(record_list: list[BalanceRecord | SQLRecord]) -
             ac_balance=record.ac_balance,
         ))
     return new_list
+
+
+def time_range_checker(start: int | float, end: int | float) -> None:
+    if end is None:
+        return
+
+    if start > end:
+        raise exc.ParamError(
+            '[time_range_params]',
+            'The end time should be greater than or equal to the start time')
+
+    if start < 0:
+        raise exc.ParamError(
+            '[start_time_param]',
+            'The start time should be a valid UNIX timestamp which is greater than zero'
+        )
